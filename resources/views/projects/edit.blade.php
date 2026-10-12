@@ -1,0 +1,1 @@
+<x-layouts::app title="Ubah proyek"><div class="mx-auto max-w-3xl space-y-6"><h1 class="text-2xl font-bold">Ubah pengaturan riset</h1><x-research.notice />@include('projects.form')</div></x-layouts::app>

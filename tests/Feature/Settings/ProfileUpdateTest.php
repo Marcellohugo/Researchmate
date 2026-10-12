@@ -2,8 +2,11 @@
 
 namespace Tests\Feature\Settings;
 
+use App\Models\Document;
+use App\Models\ResearchProject;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -54,6 +57,40 @@ class ProfileUpdateTest extends TestCase
         $this->assertNotNull($user->refresh()->email_verified_at);
     }
 
+    public function test_uppercase_profile_email_is_normalized_and_can_log_in(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        Livewire::test('pages::settings.profile')
+            ->set('email', 'PENELITI@example.com')
+            ->call('updateProfileInformation')
+            ->assertHasNoErrors();
+
+        $this->assertSame('peneliti@example.com', $user->refresh()->email);
+        $this->post(route('logout'));
+        $this->post(route('login.store'), [
+            'email' => 'PENELITI@example.com',
+            'password' => 'password',
+        ])->assertSessionHasNoErrors()->assertRedirect('/dashboard');
+        $this->assertAuthenticatedAs($user);
+    }
+
+    public function test_profile_email_cannot_duplicate_another_user_with_different_case(): void
+    {
+        $other = User::factory()->create(['email' => 'peneliti@example.com']);
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        Livewire::test('pages::settings.profile')
+            ->set('email', 'PENELITI@example.com')
+            ->call('updateProfileInformation')
+            ->assertHasErrors(['email' => 'unique']);
+
+        $this->assertSame('peneliti@example.com', $other->refresh()->email);
+        $this->assertNotSame($other->email, $user->refresh()->email);
+    }
+
     public function test_user_can_delete_their_account(): void
     {
         $user = User::factory()->create();
@@ -85,5 +122,25 @@ class ProfileUpdateTest extends TestCase
         $response->assertHasErrors(['password']);
 
         $this->assertNotNull($user->fresh());
+    }
+
+    public function test_account_deletion_removes_only_its_private_project_files(): void
+    {
+        Storage::fake('local');
+        $user = User::factory()->create();
+        $project = ResearchProject::factory()->for($user)->create();
+        $other = ResearchProject::factory()->create();
+        foreach ([$project, $other] as $item) {
+            $path = 'projects/'.$item->id.'/documents/test.pdf';
+            Storage::disk('local')->put($path, 'test');
+            Document::query()->create(['project_id' => $item->id, 'original_filename' => 'test.pdf', 'storage_path' => $path,
+                'mime_type' => 'application/pdf', 'file_size' => 4, 'file_hash' => hash('sha256', 'test')]);
+        }
+        $this->actingAs($user);
+        Livewire::test('pages::settings.delete-user-modal')->set('password', 'password')->call('deleteUser')->assertHasNoErrors();
+        Storage::disk('local')->assertMissing('projects/'.$project->id.'/documents/test.pdf');
+        Storage::disk('local')->assertExists('projects/'.$other->id.'/documents/test.pdf');
+        $this->assertNull($user->fresh());
+        $this->assertDatabaseHas('documents', ['project_id' => $other->id]);
     }
 }

@@ -1,0 +1,87 @@
+{
+  "project": {
+    "title": "AI Generatif dan Berpikir Kritis Mahasiswa",
+    "research_question": "Bagaimana penggunaan AI generatif memengaruhi kemampuan berpikir kritis mahasiswa?",
+    "description": "Membandingkan penggunaan AI generatif, aktivitas evaluasi argumen, dan keterbatasan bukti pada mahasiswa.",
+    "topic": "AI generatif dalam pendidikan tinggi",
+    "objectives": "Membandingkan penggunaan AI langsung dengan penggunaan AI disertai evaluasi kritis menggunakan lima dokumen.",
+    "keywords": "generative AI, critical thinking, university students",
+    "year_from": 2023,
+    "year_to": 2026,
+    "discipline": "Pendidikan",
+    "language": "id",
+    "research_mode": "offline",
+    "target_papers": 5,
+    "settings": {
+      "fixture": "researchmate-dummy-v1",
+      "synthetic": true
+    }
+  },
+  "papers": [
+    {
+      "filename": "artikel-01-evaluasi-kritis.pdf",
+      "title": "Evaluasi Kritis terhadap Jawaban AI",
+      "author": "Peneliti A",
+      "year": 2023,
+      "sections": {
+        "Tujuan": "Menguji aktivitas evaluasi jawaban AI pada mahasiswa.",
+        "Metode": "Eksperimen dengan 40 mahasiswa. Kelompok pertama menerima jawaban AI langsung. Kelompok kedua diminta memeriksa sumber, membandingkan argumen, dan menemukan kesalahan.",
+        "Temuan": "Kelompok evaluasi menunjukkan peningkatan kemampuan mengidentifikasi kelemahan argumen. Persentase peningkatan tidak dilaporkan.",
+        "Keterbatasan": "Sampel kecil dan pengamatan hanya empat minggu.",
+        "Rekomendasi": "Uji pada disiplin lain dan periode lebih panjang."
+      }
+    },
+    {
+      "filename": "artikel-02-ketergantungan-ai.pdf",
+      "title": "Ketergantungan pada Jawaban AI",
+      "author": "Peneliti B",
+      "year": 2024,
+      "sections": {
+        "Tujuan": "Mengamati kebiasaan menerima jawaban AI tanpa pemeriksaan.",
+        "Metode": "Wawancara terhadap 12 mahasiswa.",
+        "Temuan": "Sebagian peserta menerima jawaban AI tanpa membandingkan sumber. Peserta merasa tugas selesai lebih cepat, tetapi kesulitan menjelaskan alasan di balik jawaban.",
+        "Keterbatasan": "Data berdasarkan laporan diri dan satu program studi.",
+        "Rekomendasi": "Bandingkan wawancara dengan pengamatan perilaku."
+      }
+    },
+    {
+      "filename": "artikel-03-pembelajaran-terarah.pdf",
+      "title": "Penggunaan AI dengan Panduan Dosen",
+      "author": "Peneliti C",
+      "year": 2024,
+      "sections": {
+        "Tujuan": "Menguji penggunaan AI dengan panduan evaluasi argumen.",
+        "Metode": "Studi kasus pada kelas berisi 30 mahasiswa.",
+        "Temuan": "Panduan dosen membantu peserta membedakan klaim, bukti, dan interpretasi. AI digunakan sebagai bahan diskusi.",
+        "Keterbatasan": "Tidak ada kelompok pembanding.",
+        "Rekomendasi": "Gunakan kelompok kontrol pada pengujian berikutnya."
+      }
+    },
+    {
+      "filename": "artikel-04-perbedaan-disiplin.pdf",
+      "title": "Penggunaan AI pada Dua Disiplin",
+      "author": "Peneliti D",
+      "year": 2025,
+      "sections": {
+        "Tujuan": "Membandingkan penggunaan AI dalam teknik dan ilmu sosial.",
+        "Metode": "Survei terhadap 60 mahasiswa.",
+        "Temuan": "Peserta teknik memakai AI untuk memeriksa solusi. Peserta ilmu sosial memakai AI untuk membandingkan perspektif.",
+        "Keterbatasan": "Kemampuan berpikir kritis tidak diukur langsung.",
+        "Rekomendasi": "Gunakan instrumen pengukuran yang sama antardisiplin."
+      }
+    },
+    {
+      "filename": "artikel-05-dampak-jangka-panjang.pdf",
+      "title": "Dampak Penggunaan AI selama Satu Semester",
+      "author": "Peneliti E",
+      "year": 2026,
+      "sections": {
+        "Tujuan": "Mengamati perubahan evaluasi argumen selama satu semester.",
+        "Metode": "Studi longitudinal dengan 25 mahasiswa.",
+        "Temuan": "Kemampuan evaluasi meningkat pada peserta yang rutin memeriksa sumber. Peserta yang menyalin jawaban menunjukkan perkembangan yang tidak konsisten.",
+        "Keterbatasan": "Kemampuan awal dan intensitas penggunaan berbeda.",
+        "Rekomendasi": "Kontrol kemampuan awal serta frekuensi penggunaan AI."
+      }
+    }
+  ]
+}

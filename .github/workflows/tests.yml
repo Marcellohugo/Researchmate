@@ -12,6 +12,27 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16
+        env:
+          POSTGRES_DB: researchmate_testing
+          POSTGRES_USER: researchmate
+          POSTGRES_PASSWORD: testing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: researchmate_testing
+      DB_USERNAME: researchmate
+      DB_PASSWORD: testing
 
     steps:
       - name: Checkout code
@@ -32,7 +53,14 @@ jobs:
           node-version: '22'
 
       - name: Setup Application
-        run: composer setup
+        run: |
+          composer install --no-interaction --prefer-dist
+          cp .env.example .env
+          php artisan key:generate
+          PGPASSWORD=testing psql -h 127.0.0.1 -U researchmate -d researchmate_testing -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+          php artisan migrate --no-interaction
+          npm ci
+          npm run build
 
       - name: Run CI Checks
         run: composer ci:check
