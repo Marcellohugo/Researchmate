@@ -11,6 +11,7 @@ use Illuminate\Support\Carbon;
  * @property int $id
  * @property int $project_id
  * @property int $paper_id
+ * @property int|null $run_id
  * @property array<string, mixed> $structured_analysis
  * @property string $evidence_level
  * @property string $analysis_model
@@ -18,8 +19,9 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property-read ResearchProject $project
  * @property-read Paper $paper
+ * @property-read ResearchRun|null $run
  */
-#[Fillable(['project_id', 'paper_id', 'structured_analysis', 'evidence_level', 'analysis_model'])]
+#[Fillable(['project_id', 'paper_id', 'run_id', 'structured_analysis', 'evidence_level', 'analysis_model'])]
 class PaperAnalysis extends Model
 {
     /** @return array<string, string> */
@@ -40,5 +42,11 @@ class PaperAnalysis extends Model
     public function paper(): BelongsTo
     {
         return $this->belongsTo(Paper::class, 'paper_id');
+    }
+
+    /** @return BelongsTo<ResearchRun, $this> */
+    public function run(): BelongsTo
+    {
+        return $this->belongsTo(ResearchRun::class, 'run_id');
     }
 }

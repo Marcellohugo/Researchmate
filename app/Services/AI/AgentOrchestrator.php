@@ -131,7 +131,7 @@ class AgentOrchestrator
         $project = $context->project;
         if ($stage === 'analyzing') {
             foreach ($output['analyses'] as $analysis) {
-                PaperAnalysis::query()->updateOrCreate(['project_id' => $project->id, 'paper_id' => $analysis['paper_id']], ['structured_analysis' => $analysis, 'evidence_level' => $analysis['source_access_level'], 'analysis_model' => config('ai.chat_model')]);
+                PaperAnalysis::query()->updateOrCreate(['project_id' => $project->id, 'paper_id' => $analysis['paper_id'], 'run_id' => $context->run->id], ['structured_analysis' => $analysis, 'evidence_level' => $analysis['source_access_level'], 'analysis_model' => config('ai.chat_model')]);
                 $project->papers()->updateExistingPivot($analysis['paper_id'], ['analysis_status' => $analysis['analysis_status']]);
             }
         }

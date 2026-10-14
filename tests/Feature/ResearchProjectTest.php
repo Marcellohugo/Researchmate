@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Paper;
 use App\Models\ResearchProject;
+use App\Models\ResearchRun;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
@@ -128,6 +129,17 @@ class ResearchProjectTest extends TestCase
         $this->assertSame('updated', $history->action);
         $this->assertSame($previousTitle, $history->payload['before']['title']);
         $this->assertSame('AI dan berpikir kritis', $history->payload['after']['title']);
+    }
+
+    public function test_project_settings_cannot_change_while_a_research_run_is_active(): void
+    {
+        $project = ResearchProject::factory()->create();
+        ResearchRun::query()->create(['project_id' => $project->id, 'status' => 'analyzing', 'current_stage' => 'analyzing']);
+
+        $this->actingAs($project->user)->put(route('projects.update', $project), $this->projectInput())
+            ->assertSessionHasErrors('workflow');
+
+        $this->assertNotSame('AI dan berpikir kritis', $project->refresh()->title);
     }
 
     public function test_duplication_copies_settings_without_papers_or_results(): void

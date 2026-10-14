@@ -49,6 +49,9 @@ class DocumentController extends Controller
         try {
             $document = DB::transaction(function () use ($project, $file, $hash, $name, $path): Document {
                 $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
+                if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+                    throw ValidationException::withMessages(['workflow' => 'PDF tidak dapat diubah saat alur riset masih berjalan.']);
+                }
                 if ($locked->documents()->where('file_hash', $hash)->exists()) {
                     throw ValidationException::withMessages(['pdf' => 'PDF yang sama sudah ada di proyek ini.']);
                 }
@@ -88,7 +91,11 @@ class DocumentController extends Controller
     {
         $this->authorizeDocument($project, $document, 'update');
         $path = $document->storage_path;
-        DB::transaction(function () use ($document, $path, $evidenceInvalidation): void {
+        DB::transaction(function () use ($project, $document, $path, $evidenceInvalidation): void {
+            $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
+            if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+                throw ValidationException::withMessages(['workflow' => 'PDF tidak dapat diubah saat alur riset masih berjalan.']);
+            }
             $evidenceInvalidation->invalidate($document);
             $document->delete();
             DB::afterCommit(fn () => Storage::disk('local')->delete($path));
@@ -100,10 +107,22 @@ class DocumentController extends Controller
     public function reindex(ResearchProject $project, Document $document): RedirectResponse
     {
         $this->authorizeDocument($project, $document, 'update');
-        if (in_array($document->extraction_status, ['processing', 'queued'], true)) {
+        $queued = DB::transaction(function () use ($project, $document): bool {
+            $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
+            if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+                throw ValidationException::withMessages(['workflow' => 'PDF tidak dapat diubah saat alur riset masih berjalan.']);
+            }
+            $lockedDocument = Document::query()->lockForUpdate()->where('project_id', $project->id)->findOrFail($document->id);
+            if (in_array($lockedDocument->extraction_status, ['processing', 'queued'], true)) {
+                return false;
+            }
+            $lockedDocument->update(['extraction_status' => 'queued', 'error_message' => null]);
+
+            return true;
+        });
+        if (! $queued) {
             return back()->with('status', 'Dokumen sedang diproses atau sudah ada dalam antrean.');
         }
-        $document->update(['extraction_status' => 'queued', 'error_message' => null]);
         ProcessDocument::dispatch($document->id)->afterCommit();
 
         return to_route('projects.documents.index', $project)->with('status', 'Dokumen masuk antrean indeks ulang.');

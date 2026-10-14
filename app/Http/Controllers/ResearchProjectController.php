@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class ResearchProjectController extends Controller
@@ -77,9 +78,13 @@ class ResearchProjectController extends Controller
         $user = $request->user();
         abort_unless($user instanceof User, 401);
         DB::transaction(function () use ($request, $project, $user): void {
-            $previous = $project->only(array_keys($request->validated()));
-            $project->update($request->validated());
-            $project->history()->create([
+            $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
+            if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+                throw ValidationException::withMessages(['workflow' => 'Pengaturan proyek tidak dapat diubah saat alur riset masih berjalan.']);
+            }
+            $previous = $locked->only(array_keys($request->validated()));
+            $locked->update($request->validated());
+            $locked->history()->create([
                 'user_id' => $user->id,
                 'action' => 'updated',
                 'payload' => ['before' => $previous, 'after' => $request->validated()],

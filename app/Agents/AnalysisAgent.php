@@ -7,6 +7,7 @@ namespace App\Agents;
 use App\Models\AgentStep;
 use App\Models\PaperAnalysis;
 use App\Models\PaperChunk;
+use App\Models\ResearchRun;
 use App\Services\AI\AbstractAgent;
 use App\Services\AI\AgentContext;
 use App\Services\AI\AgentResult;
@@ -72,10 +73,19 @@ class AnalysisAgent extends AbstractAgent
             $analysis['invalid_references'] = $evidence['invalid'];
             $analysis['analysis_status'] = $evidence['valid'] === [] || $evidence['invalid'] !== [] ? 'insufficient_evidence' : 'supported';
             $analysis['paper_id'] = $paper->id;
-            DB::transaction(function () use ($context, $paper, $analysis, $stepName): void {
-                PaperAnalysis::query()->updateOrCreate(['project_id' => $context->project->id, 'paper_id' => $paper->id], ['structured_analysis' => $analysis, 'evidence_level' => $analysis['source_access_level'], 'analysis_model' => config('ai.chat_model')]);
+            $saved = DB::transaction(function () use ($context, $paper, $analysis, $stepName): bool {
+                $run = ResearchRun::query()->whereKey($context->run->id)->lockForUpdate()->firstOrFail();
+                if ($run->status === 'cancelled') {
+                    return false;
+                }
+                PaperAnalysis::query()->updateOrCreate(['project_id' => $context->project->id, 'paper_id' => $paper->id, 'run_id' => $context->run->id], ['structured_analysis' => $analysis, 'evidence_level' => $analysis['source_access_level'], 'analysis_model' => config('ai.chat_model')]);
                 AgentStep::query()->updateOrCreate(['run_id' => $context->run->id, 'step_name' => $stepName], ['agent_name' => $this->name(), 'status' => 'completed', 'output_payload' => $analysis, 'completed_at' => now()]);
+
+                return true;
             });
+            if (! $saved) {
+                break;
+            }
             $analyses[] = $analysis;
         }
 

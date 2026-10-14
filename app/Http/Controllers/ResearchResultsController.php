@@ -21,7 +21,8 @@ class ResearchResultsController extends Controller
     {
         Gate::authorize('view', $project);
         $input = $request->validate(['q' => 'nullable|string|max:200', 'sort' => 'nullable|in:title,year,method', 'direction' => 'nullable|in:asc,desc']);
-        $analyses = $project->analyses()->with('paper')->get();
+        $run = $project->runs()->latest('id')->first();
+        $analyses = $run === null ? collect() : $project->analyses()->where('run_id', $run->id)->with('paper')->get();
         if (! empty($input['q'])) {
             $query = mb_strtolower($input['q']);
             $analyses = $analyses->filter(fn ($analysis) => str_contains(mb_strtolower($analysis->paper->title.' '.json_encode($analysis->structured_analysis, JSON_UNESCAPED_UNICODE)), $query));
@@ -39,14 +40,18 @@ class ResearchResultsController extends Controller
     {
         Gate::authorize('view', $project);
 
-        return view('research.gaps', ['project' => $project, 'gaps' => $project->gaps()->latest('id')->get()]);
+        $run = $project->runs()->latest('id')->first();
+
+        return view('research.gaps', ['project' => $project, 'gaps' => $run === null ? collect() : $project->gaps()->where('run_id', $run->id)->latest('id')->get()]);
     }
 
     public function reports(ResearchProject $project): View
     {
         Gate::authorize('view', $project);
 
-        return view('research.reports', ['project' => $project, 'artifacts' => $project->artifacts()->latest('id')->get(), 'latestRun' => $project->runs()->latest('id')->first(), 'claims' => $project->claims()->with('evidence.paper')->latest('id')->get()]);
+        $latestRun = $project->runs()->latest('id')->first();
+
+        return view('research.reports', ['project' => $project, 'artifacts' => $project->artifacts()->latest('id')->get(), 'latestRun' => $latestRun, 'claims' => $latestRun === null ? collect() : $project->claims()->where('run_id', $latestRun->id)->with('evidence.paper')->latest('id')->get()]);
     }
 
     public function export(ResearchProject $project): RedirectResponse
@@ -58,7 +63,7 @@ class ResearchResultsController extends Controller
         }
         $plan = $run->research_plan ?: ($run->workflow_state['planning'] ?? []);
         $lines = ['# '.$project->title, '', '**Pertanyaan riset:** '.$project->research_question, '', '**Status alur:** '.$run->status, '**Status laporan:** '.($run->status === 'completed' ? 'Disetujui oleh pengguna.' : 'Draf; menunggu persetujuan pengguna.'), '**Mode literatur:** '.$project->research_mode, '', 'Celah yang ditampilkan merupakan kandidat berdasarkan koleksi proyek, bukan bukti bahwa suatu topik belum pernah diteliti.', '', '## Rencana Penelitian', '', '```json', json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), '```', '', '## Batas Analisis dan Verifikasi', '', 'Mode literatur offline membatasi sumber pada dokumen lokal. Chat, agen, dan embedding memakai gateway Senopati dan memerlukan internet.', '', 'Analisis PDF menggunakan paling banyak 12 cuplikan awal per artikel. Status full_text menunjukkan sumber PDF tersedia, bukan bahwa seluruh isi PDF telah dianalisis. Informasi di luar cuplikan dapat terlewat.', '', 'Pencocokan kutipan memastikan teks bukti terdapat dalam sumber proyek. Penilaian hubungan makna antara klaim dan bukti dilakukan model dan tetap memerlukan tinjauan ilmiah oleh manusia. Status verified bukan jaminan kebenaran ilmiah atau kualitas penelitian.', '', 'Metadata offline tidak diverifikasi melalui layanan eksternal. Persetujuan pengguna tidak mengubah keterbatasan bukti dan metadata.', '', '## Sintesis', '', (string) ($run->workflow_state['synthesizing']['synthesis'] ?? 'Belum tersedia.'), '', '## Matriks Literatur', ''];
-        foreach ($project->analyses()->with('paper')->get() as $analysis) {
+        foreach ($project->analyses()->where('run_id', $run->id)->with('paper')->get() as $analysis) {
             $lines[] = '### '.$analysis->paper->title;
             $lines[] = 'Sumber: '.($analysis->paper->doi ? 'https://doi.org/'.$analysis->paper->doi : ($analysis->paper->source_url ?: 'Metadata lokal; DOI belum tersedia.'));
             $lines[] = 'Akses sumber: '.$analysis->evidence_level;

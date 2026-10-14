@@ -24,6 +24,9 @@ class LiteratureController extends Controller
     {
         Gate::authorize('update', $project);
         $input = $request->validate(['query' => 'required|string|max:500', 'year_from' => 'nullable|integer|min:1500|max:'.(now()->year + 1), 'year_to' => 'nullable|integer|min:1500|max:'.(now()->year + 1).'|gte:year_from']);
+        if ($project->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+            return back()->withInput()->withErrors(['query' => 'Penelusuran literatur tidak dapat mengubah koleksi saat alur riset masih berjalan.']);
+        }
         if ($project->research_mode === 'offline') {
             return to_route('projects.literature.index', $project)->withErrors(['query' => 'Proyek luring hanya menggunakan PDF lokal. Ubah mode proyek untuk penelusuran OpenAlex.']);
         }

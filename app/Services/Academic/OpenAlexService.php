@@ -8,6 +8,7 @@ use App\Models\Paper;
 use App\Models\ResearchProject;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 class OpenAlexService
@@ -126,20 +127,27 @@ class OpenAlexService
      */
     public function save(ResearchProject $project, array $records): array
     {
-        $ids = [];
-        foreach ($records as $rank => $record) {
-            $paper = null;
-            if (! empty($record['doi'])) {
-                $paper = Paper::query()->where('doi', $record['doi'])->first();
+        return DB::transaction(function () use ($project, $records): array {
+            $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
+            $limit = min($locked->target_papers, (int) config('ai.max_papers', 20));
+            $ids = [];
+            foreach ($records as $rank => $record) {
+                if ($locked->papers()->count() >= $limit) {
+                    break;
+                }
+                $paper = null;
+                if (! empty($record['doi'])) {
+                    $paper = Paper::query()->where('doi', $record['doi'])->first();
+                }
+                if ($paper === null && ! empty($record['openalex_id'])) {
+                    $paper = Paper::query()->where('openalex_id', $record['openalex_id'])->first();
+                }
+                $paper ??= Paper::query()->create($record);
+                $locked->papers()->syncWithoutDetaching([$paper->id => ['relevance_score' => max(0, 1 - $rank / max(1, count($records)))]]);
+                $ids[] = $paper->id;
             }
-            if ($paper === null && ! empty($record['openalex_id'])) {
-                $paper = Paper::query()->where('openalex_id', $record['openalex_id'])->first();
-            }
-            $paper ??= Paper::query()->create($record);
-            $project->papers()->syncWithoutDetaching([$paper->id => ['relevance_score' => max(0, 1 - $rank / max(1, count($records)))]]);
-            $ids[] = $paper->id;
-        }
 
-        return array_values(array_unique($ids));
+            return array_values(array_unique($ids));
+        });
     }
 }

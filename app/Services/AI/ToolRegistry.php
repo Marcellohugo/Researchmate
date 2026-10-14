@@ -104,7 +104,7 @@ class ToolRegistry
                 'normalize_doi' => ['doi' => OpenAlexService::normalizeDoi((string) $arguments['doi'])],
                 'search_project_documents' => ['papers' => $context->project->papers()->whereHas('documents', fn ($query) => $query->where('project_id', $context->project->id))->limit((int) config('ai.max_papers', 20))->get()->map(fn ($paper) => $paper->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()],
                 'retrieve_document_chunks' => ['chunks' => $this->retrieval->retrieve($context->project, (string) $arguments['query'])],
-                'get_literature_matrix' => ['analyses' => PaperAnalysis::query()->where('project_id', $context->project->id)->get()->toArray()],
+                'get_literature_matrix' => ['analyses' => PaperAnalysis::query()->where('project_id', $context->project->id)->where('run_id', $context->run->id)->get()->toArray()],
                 'verify_claim_evidence' => $this->verifyEvidence($context, $arguments['references']),
                 'save_paper_analysis' => $this->saveAnalysis($context, $arguments),
                 'save_research_gap' => $this->saveGap($context, $arguments),
@@ -168,7 +168,7 @@ class ToolRegistry
         $analysis['source_access_level'] = $context->project->documents()->where('paper_id', $paper->id)->where('extraction_status', 'indexed')->exists() ? 'full_text' : 'abstract_only';
         $analysis['evidence_references'] = $evidence['valid'];
         $analysis['analysis_status'] = $evidence['invalid'] !== [] || $evidence['valid'] === [] ? 'insufficient_evidence' : 'supported';
-        $saved = PaperAnalysis::query()->updateOrCreate(['project_id' => $context->project->id, 'paper_id' => $paper->id], [
+        $saved = PaperAnalysis::query()->updateOrCreate(['project_id' => $context->project->id, 'paper_id' => $paper->id, 'run_id' => $context->run->id], [
             'structured_analysis' => $analysis, 'evidence_level' => $analysis['source_access_level'] ?? 'abstract_only', 'analysis_model' => config('ai.chat_model'),
         ]);
 

@@ -10,6 +10,8 @@ use App\Services\Documents\RetrievalService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\DB;
+use App\Models\PaperChunk;
 use RuntimeException;
 use Throwable;
 
@@ -71,8 +73,30 @@ class AnswerResearchQuestion implements ShouldBeUnique, ShouldQueue
             if ($result['evidence_status'] === 'supported' && $references === []) {
                 throw new RuntimeException('Jawaban mengklaim dukungan bukti tanpa kutipan yang valid.');
             }
-            $message->update(['content' => $result['answer'], 'status' => 'completed', 'source_references' => $references,
-                'evidence_status' => $result['evidence_status'], 'error_message' => null]);
+            DB::transaction(function () use ($message, $result, $references): void {
+                $lockedMessage = ResearchMessage::query()->whereKey($message->id)->lockForUpdate()->firstOrFail();
+                $freshReferences = [];
+                if ($references !== []) {
+                    $chunkIds = array_values(array_unique(array_map('intval', array_column($references, 'chunk_id'))));
+                    $chunks = PaperChunk::query()->with('document')->whereIn('id', $chunkIds)
+                        ->whereHas('document', fn ($query) => $query->where('project_id', $lockedMessage->project_id)->where('extraction_status', 'indexed'))
+                        ->lockForUpdate()->get()->keyBy('id');
+                    foreach ($references as $reference) {
+                        $chunk = $chunks->get((int) $reference['chunk_id']);
+                        if ($chunk === null || $chunk->content !== $reference['quote']) {
+                            throw new RuntimeException('Bukti berubah saat jawaban AI diproses. Silakan ulangi pertanyaan.');
+                        }
+                        $freshReferences[] = array_merge($reference, [
+                            'document_id' => $chunk->document_id,
+                            'paper_id' => $chunk->document->paper_id,
+                            'page_number' => $chunk->page_number,
+                            'quote' => $chunk->content,
+                        ]);
+                    }
+                }
+                $lockedMessage->update(['content' => $result['answer'], 'status' => 'completed', 'source_references' => $freshReferences,
+                    'evidence_status' => $result['evidence_status'], 'error_message' => null]);
+            });
         } catch (Throwable $exception) {
             $message->update(['status' => 'failed', 'error_message' => mb_substr($exception->getMessage(), 0, 2000)]);
             throw $exception;

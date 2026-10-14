@@ -8,8 +8,10 @@ use App\Models\AgentStep;
 use App\Models\Claim;
 use App\Models\Document;
 use App\Models\Paper;
+use App\Models\PaperAnalysis;
 use App\Models\PaperChunk;
 use App\Models\ResearchProject;
+use App\Models\ResearchGap;
 use App\Models\ResearchRun;
 use App\Models\User;
 use App\Services\AI\AgentContext;
@@ -290,6 +292,36 @@ class ResearchWorkflowTest extends TestCase
         $this->assertDatabaseCount('paper_analyses', 1);
         $this->assertDatabaseCount('agent_steps', 2);
         Http::assertNothingSent();
+    }
+
+    public function test_results_and_export_use_only_the_latest_run(): void
+    {
+        Storage::fake('local');
+        $project = ResearchProject::factory()->create();
+        $oldPaper = Paper::query()->create(['title' => 'Artikel lama', 'metadata_source' => 'test_fixture']);
+        $newPaper = Paper::query()->create(['title' => 'Artikel terbaru', 'metadata_source' => 'test_fixture']);
+        $project->papers()->attach([$oldPaper->id, $newPaper->id]);
+        $oldRun = $project->runs()->create(['status' => 'completed', 'current_stage' => 'awaiting_approval', 'workflow_state' => []]);
+        $newRun = $project->runs()->create(['status' => 'awaiting_approval', 'current_stage' => 'awaiting_approval', 'research_plan' => [], 'workflow_state' => ['synthesizing' => ['synthesis' => 'Sintesis terbaru.']]]);
+        PaperAnalysis::query()->create(['project_id' => $project->id, 'paper_id' => $oldPaper->id, 'run_id' => $oldRun->id, 'structured_analysis' => ['title' => $oldPaper->title], 'evidence_level' => 'abstract_only', 'analysis_model' => 'test']);
+        PaperAnalysis::query()->create(['project_id' => $project->id, 'paper_id' => $newPaper->id, 'run_id' => $newRun->id, 'structured_analysis' => ['title' => $newPaper->title], 'evidence_level' => 'abstract_only', 'analysis_model' => 'test']);
+        $project->claims()->createMany([
+            ['run_id' => $oldRun->id, 'claim_text' => 'Klaim lama'],
+            ['run_id' => $newRun->id, 'claim_text' => 'Klaim terbaru'],
+        ]);
+        $project->gaps()->createMany([
+            ['run_id' => $oldRun->id, 'title' => 'Celah lama', 'category' => 'contextual', 'description' => 'Lama'],
+            ['run_id' => $newRun->id, 'title' => 'Celah terbaru', 'category' => 'contextual', 'description' => 'Terbaru'],
+        ]);
+
+        $this->actingAs($project->user)->get(route('projects.matrix', $project))->assertSee('Artikel terbaru')->assertDontSee('Artikel lama');
+        $this->get(route('projects.gaps', $project))->assertSee('Celah terbaru')->assertDontSee('Celah lama');
+        $this->get(route('projects.reports', $project))->assertSee('Klaim terbaru')->assertDontSee('Klaim lama');
+        $this->post(route('projects.reports.export', $project))->assertRedirect();
+        $artifact = $project->artifacts()->latest('id')->firstOrFail();
+        $report = Storage::disk('local')->get($artifact->storage_path);
+        $this->assertStringContainsString('Artikel terbaru', $report);
+        $this->assertStringNotContainsString('Artikel lama', $report);
     }
 
     public function test_tool_budget_is_persistent_and_stops_further_execution(): void

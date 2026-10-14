@@ -6,6 +6,7 @@ use App\Jobs\AnswerResearchQuestion;
 use App\Jobs\ProcessDocument;
 use App\Models\Document;
 use App\Models\Paper;
+use App\Models\PaperChunk;
 use App\Models\ResearchProject;
 use App\Models\User;
 use App\Services\AI\SenopatiService;
@@ -14,6 +15,7 @@ use App\Services\Documents\RetrievalService;
 use App\Services\Documents\VectorSearchService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Factory;
+use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
@@ -207,6 +209,31 @@ class DocumentRagTest extends TestCase
         }
     }
 
+    public function test_chat_rejects_evidence_that_disappears_before_save(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $document = $this->document($project, 'indexed');
+        $chunk = $this->chunk($document, [1, 0, 0]);
+        $message = $project->messages()->create(['role' => 'assistant', 'content' => '', 'status' => 'pending']);
+        Http::fake([
+            SenopatiService::EMBEDDINGS_ENDPOINT => Http::response(GatewayFixture::embeddings([[1, 0, 0]])),
+            SenopatiService::ENDPOINT => function (Request $request) use ($chunk) {
+                $chunk->delete();
+
+                return Http::response(GatewayFixture::chat(json_encode(['answer' => 'Jawaban lama.', 'evidence_status' => 'supported', 'citations' => [['chunk_id' => $chunk->id]]])));
+            },
+        ]);
+
+        try {
+            (new AnswerResearchQuestion($message->id, 'Apa temuannya?'))->handle(app(RetrievalService::class), app(SenopatiService::class));
+            $this->fail('Bukti yang berubah harus ditolak.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('Bukti berubah', $exception->getMessage());
+            $this->assertSame('failed', $message->fresh()->status);
+            $this->assertNull($message->fresh()->source_references);
+        }
+    }
+
     public function test_reindex_marks_historical_citations_for_review_and_requires_force_for_changed_dimensions(): void
     {
         $project = ResearchProject::factory()->create();
@@ -269,6 +296,16 @@ class DocumentRagTest extends TestCase
         Storage::disk('local')->assertMissing($document->storage_path);
     }
 
+    public function test_document_changes_are_blocked_while_a_research_run_is_active(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $document = $this->document($project);
+        $project->runs()->create(['status' => 'analyzing', 'current_stage' => 'analyzing']);
+
+        $this->actingAs($project->user)->delete(route('projects.documents.destroy', [$project, $document]))->assertSessionHasErrors('workflow');
+        $this->assertDatabaseHas('documents', ['id' => $document->id]);
+    }
+
     private function document(ResearchProject $project, string $status = 'queued'): Document
     {
         $paper = Paper::query()->create(['title' => 'Berkas pengujian', 'authors' => [], 'metadata_source' => 'uploaded_filename']);
@@ -280,9 +317,9 @@ class DocumentRagTest extends TestCase
             'mime_type' => 'application/pdf', 'file_size' => strlen(PdfFixture::make()), 'file_hash' => hash('sha256', $path), 'extraction_status' => $status]);
     }
 
-    private function chunk(Document $document, array $vector, ?string $model = null): void
+    private function chunk(Document $document, array $vector, ?string $model = null): PaperChunk
     {
-        $document->chunks()->create(['chunk_index' => 0, 'page_number' => 1, 'content' => 'Teks bukti pengujian.',
+        return $document->chunks()->create(['chunk_index' => 0, 'page_number' => 1, 'content' => 'Teks bukti pengujian.',
             'embedding' => json_encode($vector), 'embedding_dimensions' => count($vector), 'embedding_model' => $model ?? config('ai.embed_model')]);
     }
 }
