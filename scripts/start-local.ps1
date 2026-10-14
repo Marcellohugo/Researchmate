@@ -13,9 +13,11 @@ New-Item -ItemType Directory -Path $taskLogDir -Force | Out-Null
 $taskPgBin = Join-Path $taskRuntime 'postgresql16\pgsql\bin'
 $taskPgData = Join-Path $env:LOCALAPPDATA 'ResearchMate\postgres16-data'
 if ((Test-Path -LiteralPath (Join-Path $taskPgBin 'pg_ctl.exe')) -and (Test-Path -LiteralPath (Join-Path $taskPgData 'PG_VERSION'))) {
+    $taskDbPort = if ($env:DB_PORT) { $env:DB_PORT } else { ((Get-Content -LiteralPath (Join-Path $taskRoot '.env') | Where-Object { $_ -match '^DB_PORT=' } | Select-Object -First 1) -replace '^DB_PORT=', '').Trim('"', "'") }
+    if ($taskDbPort -notmatch '^\d{1,5}$' -or [int]$taskDbPort -lt 1 -or [int]$taskDbPort -gt 65535) { throw 'DB_PORT harus berisi port PostgreSQL yang valid.' }
     & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData status *> $null
     if ($LASTEXITCODE -ne 0) {
-        & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData -l (Join-Path $taskPgData 'server.log') -o '-h 127.0.0.1 -p 55433' -w start
+        & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData -l (Join-Path $taskPgData 'server.log') -o "-h 127.0.0.1 -p $taskDbPort" -w start
         if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL lokal tidak dapat dimulai. Periksa server.log.' }
     }
 }

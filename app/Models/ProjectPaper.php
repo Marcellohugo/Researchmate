@@ -14,12 +14,13 @@ use Illuminate\Support\Carbon;
  * @property float|null $relevance_score
  * @property bool $is_selected
  * @property string $analysis_status
+ * @property array<string, mixed>|null $metadata_overrides
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  * @property-read ResearchProject $project
  * @property-read Paper $paper
  */
-#[Fillable(['project_id', 'paper_id', 'relevance_score', 'is_selected', 'analysis_status'])]
+#[Fillable(['project_id', 'paper_id', 'relevance_score', 'is_selected', 'analysis_status', 'metadata_overrides'])]
 class ProjectPaper extends Model
 {
     protected $attributes = [
@@ -33,6 +34,7 @@ class ProjectPaper extends Model
         return [
             'relevance_score' => 'float',
             'is_selected' => 'boolean',
+            'metadata_overrides' => 'array',
         ];
     }
 

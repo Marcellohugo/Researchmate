@@ -127,9 +127,9 @@ class ResearchWorkflowTest extends TestCase
         $draft = Storage::disk('local')->get($project->artifacts()->first()->storage_path);
         $this->assertStringContainsString('Draf; menunggu persetujuan pengguna.', $draft);
         $this->assertStringContainsString('Membandingkan temuan', $draft);
-        $this->assertStringContainsString('Status verifikasi metadata: metadata_unverified', $draft);
+        $this->assertStringContainsString('Status metadata: '.__('evidence.metadata_unverified'), $draft);
         $this->assertStringContainsString('metodologi belum dilaporkan', $draft);
-        $this->assertStringContainsString('paling banyak 12 cuplikan terpilih', $draft);
+        $this->assertStringContainsString('Cakupan teks: 1 dari 1 potongan teks PDF dianalisis.', $draft);
         $this->assertStringContainsString('bukan jaminan kebenaran ilmiah', $draft);
         $this->post(route('projects.workflow.approve', $project), ['approval' => '1'])->assertRedirect(route('projects.reports', $project));
         $this->assertSame('completed', $run->fresh()->status);
@@ -370,6 +370,31 @@ class ResearchWorkflowTest extends TestCase
         $this->assertDatabaseCount('paper_analyses', 0);
         $this->assertDatabaseMissing('agent_steps', ['run_id' => $run->id, 'step_name' => 'analysis:paper:'.$chunk->document->paper_id]);
         Queue::assertNothingPushed();
+    }
+
+    public function test_partial_analysis_dispatches_the_next_batch_without_recording_a_failure(): void
+    {
+        Queue::fake();
+        $project = ResearchProject::factory()->create();
+        $chunk = $this->source($project);
+        $paperId = $chunk->document->paper_id;
+        for ($index = 1; $index < 13; $index++) {
+            $chunk->document->chunks()->create(['chunk_index' => $index, 'page_number' => $index + 1, 'content' => self::QUOTE]);
+        }
+        $project->papers()->updateExistingPivot($paperId, ['is_selected' => true]);
+        $run = app(WorkflowStateManager::class)->start($project);
+        $run->update(['status' => 'analyzing', 'current_stage' => 'analyzing']);
+        $this->fakeAgents($chunk);
+
+        app(AgentOrchestrator::class)->run($run);
+
+        $this->assertSame('analyzing', $run->fresh()->status);
+        $this->assertSame(0, $run->fresh()->retry_count);
+        $this->assertDatabaseCount('paper_analyses', 0);
+        $this->assertDatabaseHas('agent_steps', ['run_id' => $run->id, 'step_name' => 'analyzing:0', 'status' => 'pending']);
+        $this->assertSame(1, $run->steps()->where('step_name', 'like', 'analysis:paper:%:batch:%')->where('status', 'completed')->count());
+        Http::assertSentCount(1);
+        Queue::assertPushed(RunResearchWorkflow::class, fn ($job) => $job->runId === $run->id);
     }
 
     public function test_workflow_waits_for_document_indexing_before_start(): void

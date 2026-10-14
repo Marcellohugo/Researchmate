@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Agents;
 
+use App\Models\Paper;
+use App\Services\Academic\ProjectPaperMetadata;
 use App\Services\AI\AbstractAgent;
 use App\Services\AI\AgentContext;
 use App\Services\AI\AgentResult;
@@ -62,9 +64,12 @@ class DiscoveryAgent extends AbstractAgent
         if (! $searched) {
             throw new \RuntimeException('Model tidak meminta alat penelusuran. Gunakan model yang mendukung tool calling, lalu lanjutkan alur.');
         }
-        $papers = $context->project->papers()->when($context->project->year_from, fn ($query) => $query->where(fn ($year) => $year->whereNull('publication_year')->orWhere('publication_year', '>=', $context->project->year_from)))
-            ->when($context->project->year_to, fn ($query) => $query->where(fn ($year) => $year->whereNull('publication_year')->orWhere('publication_year', '<=', $context->project->year_to)))
-            ->limit((int) config('ai.max_papers', 20))->get();
+        $metadata = app(ProjectPaperMetadata::class);
+        $papers = $context->project->papers()->limit((int) config('ai.max_papers', 20))->get()
+            ->map(fn (Paper $paper): Paper => $metadata->apply($paper, $context->project))
+            ->filter(fn (Paper $paper): bool => $paper->publication_year === null
+                || (($context->project->year_from === null || $paper->publication_year >= $context->project->year_from)
+                    && ($context->project->year_to === null || $paper->publication_year <= $context->project->year_to)))->values();
         $messages[] = ['role' => 'user', 'content' => 'Tulis hasil JSON. Pilih hanya ID dari artikel yang benar-benar tersedia berikut: '.$papers->map(fn ($paper) => $paper->only(['id', 'title', 'abstract', 'publication_year', 'doi']))->toJson()];
         $output = $this->ai->structuredChat($messages, $this->schema());
         $ids = array_map('intval', $output['discovered_paper_ids']);

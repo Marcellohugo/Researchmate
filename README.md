@@ -6,7 +6,9 @@ PDF, database PostgreSQL/pgvector, dan laporan disimpan pada komputer. Pertanyaa
 
 ## Fitur dan panduan
 
-Autentikasi Laravel/Fortify, CRUD proyek dengan policy kepemilikan, PDF privat dengan validasi/hash, parser halaman/chunk, embedding remote, retrieval cosine pgvector, chat dengan kutipan asli, enam agen dengan schema JSON, tool allowlist, workflow persisten, checkpoint pemilihan sumber/persetujuan, bounded retry/revisi, monitor Livewire, matriks literatur, kandidat celah, dan ekspor Markdown.
+Autentikasi Laravel/Fortify, CRUD proyek dengan policy kepemilikan, PDF privat dengan validasi/hash, parser halaman/chunk, embedding remote, retrieval cosine pgvector, chat dengan kutipan asli, enam agen dengan schema JSON, tool allowlist, workflow persisten, checkpoint pemilihan sumber/persetujuan, bounded retry/revisi, monitor Livewire, matriks literatur, kandidat celah, dan laporan Markdown, Word (.docx), atau PDF.
+
+Analisis membaca seluruh potongan teks yang terindeks untuk artikel terpilih, dalam batch dengan checkpoint dan penggabungan ringkasan bertahap. Halaman literatur menyediakan penyuntingan metadata khusus proyek dan daftar pustaka APA/IEEE yang dapat diunduh sebagai teks. Laporan menyajikan rencana, sintesis, matriks, temuan, kutipan, kandidat celah, verifikasi klaim, daftar pustaka, dan batas analisis dalam bentuk yang dapat dibaca.
 
 | Panduan | Isi |
 | --- | --- |
@@ -22,7 +24,7 @@ Autentikasi Laravel/Fortify, CRUD proyek dengan policy kepemilikan, PDF privat d
 
 PHP 8.3+, Composer 2, Node.js 22.12+, PostgreSQL dengan pgvector, dan token Senopati. Lingkungan implementasi memakai PHP 8.4.26, Laravel 13.35, Livewire 4.4.7, Flux Free 2.20.1, Tailwind 4/Vite 8.3.4, PostgreSQL 16.15/pgvector 0.8.6. Versi paket dikunci di lockfile. GPU dan unduhan model di komputer pengguna tidak diperlukan.
 
-Ekstensi PHP: curl, fileinfo, mbstring, openssl, PDO/pdo_pgsql, serta ekstensi standar Laravel. Test SQLite memerlukan pdo_sqlite. Jalankan `composer check-platform-reqs` untuk persyaratan paket aktual.
+Ekstensi PHP: curl, fileinfo, gd, zip, mbstring, dom, openssl, PDO/pdo_pgsql, serta ekstensi standar Laravel. Test SQLite memerlukan pdo_sqlite. Ekspor Word memakai PHPWord; PDF memakai Dompdf. Keduanya berjalan di server PHP, tanpa instalasi Microsoft Word atau LibreOffice. Jalankan `composer check-platform-reqs` untuk persyaratan paket aktual.
 
 ## Instalasi
 
@@ -83,7 +85,7 @@ php artisan queue:work --tries=3 --timeout=1800 --sleep=1
 
 Buka [ResearchMate](http://127.0.0.1:8000). Worker diperlukan untuk PDF, chat, dan alur agen. Sesudah perubahan konfigurasi/source, clear config dan restart worker. `retry_after=1860` lebih besar dari timeout worker. PHP Windows tidak menyediakan pcntl sehingga timeout total worker tidak dipaksakan seperti pada runtime yang mendukungnya; timeout HTTP tetap berlaku.
 
-Runtime portabel komputer implementasi berada di `%LOCALAPPDATA%\ResearchMate\runtime`. PHP ada di `php\php.exe`, PostgreSQL 16 di `postgresql16\pgsql\bin`, cluster di `%LOCALAPPDATA%\ResearchMate\postgres16-data`, port **55433**. PG18 lama pada port 55432 tetap terpisah. Jangan membuat ulang cluster untuk menjalankan aplikasi.
+Runtime portabel komputer implementasi berada di `%LOCALAPPDATA%\ResearchMate\runtime`. PHP ada di `php\php.exe`, PostgreSQL 16 di `postgresql16\pgsql\bin`, cluster di `%LOCALAPPDATA%\ResearchMate\postgres16-data`, port **54329** sesuai `DB_PORT` di `.env`. Port sebelumnya 55433 dicadangkan Windows pada komputer ini. PG18 lama pada port 55432 tetap terpisah. Jangan membuat ulang cluster untuk menjalankan aplikasi.
 
 ```powershell
 $rmRuntime = Join-Path $env:LOCALAPPDATA 'ResearchMate\runtime'
@@ -91,13 +93,17 @@ $env:Path = "$rmRuntime\php;$rmRuntime;$rmRuntime\postgresql16\pgsql\bin;$env:Pa
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 ```
 
-Skrip memulai PostgreSQL 16 yang telah disiapkan, migrasi, server, dan satu worker repo tanpa jendela tambahan. Skrip tidak memasang dependensi, tidak membuat cluster, dan tidak memulai AI lokal. `-Port 8001` hanya mengganti port web. Log ada di `storage/logs`.
+Skrip memulai PostgreSQL 16 yang telah disiapkan pada `DB_PORT` dari environment atau `.env`, migrasi, server, dan satu worker repo tanpa jendela tambahan. Skrip tidak memasang dependensi, tidak membuat cluster, dan tidak memulai AI lokal. `-Port 8001` hanya mengganti port web. Log ada di `storage/logs`.
 
 ## Konfigurasi dan operasi
 
 `.env.example` mendokumentasikan semua konfigurasi. Token hanya di `.env` yang diabaikan Git; endpoint Senopati tetap HTTPS dan redirect dinonaktifkan. Token tidak ditampilkan di UI atau pesan error. `SENOPATI_TIMEOUT=300`, `AI_MAX_RETRIES=2`, `AI_MAX_OUTPUT_TOKENS=4096`, `AI_MAX_PAPERS=20`, `AI_MAX_TOOL_CALLS=40`, `AI_MAX_DOCUMENT_CHUNKS=1000`. PDF maksimal 20 MB; chunk 1200 karakter/overlap 200; retrieval enam sumber. PHP upload/post limit harus mencukupi.
 
 Setelah mengganti model/dimensi embedding, indeks ulang proyek dengan `php artisan ai:reindex ID --force`. Indeks pengganti dibuat atomik per PDF; referensi chunk yang diganti ditandai perlu tinjauan. PDF asli tetap disimpan. Cadangkan PostgreSQL dan `storage/app/private` sebelum perubahan. Metadata artikel global dipertahankan saat proyek dihapus; PDF/hasil milik proyek dibersihkan setelah commit. PDF dan laporan diunduh melalui policy, tanpa symlink publik.
+
+Perbaiki judul, penulis, tahun, DOI, jurnal, URL, volume, nomor, dan halaman melalui **Literatur → Ubah metadata**. Perubahan disimpan pada koleksi proyek (`project_papers.metadata_overrides`), sehingga artikel yang sama pada proyek lain tetap memakai metadatanya sendiri. Isi satu penulis per baris; format `Nama keluarga, Nama depan` membantu menghindari tebakan nama keluarga. Metadata yang diperbaiki diberi status ditinjau manusia, bukan diverifikasi eksternal. Penyuntingan terkunci selama workflow aktif.
+
+Pada halaman laporan, pilih Word, PDF, atau Markdown dan gaya APA/IEEE setelah verifikasi selesai. Ekspor pada tahap menunggu persetujuan diberi status draf; hasil completed diberi status disetujui pengguna. Laporan disimpan privat dan mengikuti run terbaru. Daftar pustaka memakai metadata proyek saat ekspor; perubahan metadata tidak menulis ulang temuan run terdahulu atau berkas laporan yang sudah tersimpan.
 
 `OPENALEX_API_KEY` opsional untuk penelusuran akademik online. OpenAlex/Crossref memakai host tetap, cache, timeout, dan retry terbatas. Mailer log menyimpan tautan reset password lokal; log tersebut privat. `GET /api/projects/{project}/status` memakai sesi, policy, dan throttle; gunakan `Accept: application/json`. Mutasi memakai CSRF.
 
@@ -131,7 +137,7 @@ flowchart TD
     V --> R{Revisi diperlukan?}
     R -->|Maksimal dua siklus| S
     R -->|Selesai / batas tercapai| U[Tinjauan dan persetujuan]
-    U --> E[Completed / laporan Markdown]
+    U --> E[Completed / laporan Markdown, Word, PDF]
 ```
 
 ```mermaid
@@ -184,9 +190,13 @@ npm.cmd run build
 php artisan ai:check
 ```
 
-Suite menggunakan HTTP mock, database test terpisah, serta test gateway nyata opsional. [Testing](docs/testing.md) mencatat hasil yang benar-benar dijalankan. CI remote belum dikonfirmasi. Kegagalan koneksi/token/kuota/schema tidak diganti dengan hasil rekaan.
+Suite menggunakan HTTP mock, database test terpisah, serta test gateway nyata opsional. [Testing](docs/testing.md) mencatat cakupan dan hasil yang benar-benar dijalankan. CI menjalankan pemeriksaan dan suite PostgreSQL pada setiap push ke main; periksa hasil commit terkait di GitHub Actions. Kegagalan koneksi/token/kuota/schema tidak diganti dengan hasil rekaan.
 
-OCR belum tersedia. Analisis agen membaca maksimal **12 chunk terpilih per artikel dari bagian utama dan sampel merata**, sedangkan chat memakai retrieval seluruh indeks yang sesuai. Status full_text berarti PDF tersedia, bukan seluruh artikel dibaca model. Kutipan yang cocok tidak menjamin atribusi atau kesimpulan ilmiah benar. Kandidat celah hanya berlaku pada koleksi proyek; metadata dokumen lokal tetap belum diverifikasi eksternal. Persetujuan pengguna tidak mengubah batas ini.
+Analisis baru membaca seluruh teks terindeks per artikel, maksimal sesuai `AI_MAX_DOCUMENT_CHUNKS` (dibatasi 1000). Satu batch berisi paling banyak **12 chunk atau 14.400 karakter**. Ringkasan digabung maksimal tiga bagian sekaligus sampai menghasilkan analisis artikel. Setiap eksekusi analisis membuat paling banyak satu panggilan generasi terstruktur; orkestrator menjadwalkan kelanjutan sebagai job berikutnya. Checkpoint yang berhasil dipakai ulang saat retry. Artikel dengan terlalu banyak chunk atau teks melampaui anggaran ditolak dengan petunjuk perbaikan, tanpa mengambil sampel diam-diam. Artikel yang hanya memiliki abstrak tetap dianalisis sebagai abstract_only. Pemrosesan seluruh teks membutuhkan lebih banyak panggilan, waktu, dan kuota Senopati daripada pemilihan cuplikan.
+
+Laporan menunjukkan jumlah chunk yang dianalisis dan tersedia. Run historis sebelum perubahan ini masih memiliki batas paling banyak 12 cuplikan. OCR belum tersedia; gambar dan tabel yang gagal diekstrak tidak diperiksa. Detail juga dapat terlewat saat penggabungan ringkasan. Status full_text menunjukkan akses teks PDF, bukan jaminan ketepatan ilmiah. Kutipan yang cocok tidak menjamin atribusi atau kesimpulan benar. Kandidat celah hanya berlaku pada koleksi proyek; metadata dokumen lokal tetap belum diverifikasi eksternal. Persetujuan pengguna tidak mengubah batas ini.
+
+APA/IEEE merupakan bantuan penyusunan daftar pustaka, bukan pemeriksaan kelengkapan bibliografi. Metadata yang kosong ditandai agar dapat diperbaiki; nama keluarga ambigu perlu ditinjau. Unduhan daftar pustaka berupa teks tanpa italic atau hanging indent. Gaya dan ketepatan sitasi tetap perlu disesuaikan dengan panduan penerbit atau institusi.
 
 Matriks, kandidat celah, klaim, dan ekspor mengikuti run terbaru; analisis setiap run disimpan terpisah. Pengaturan dan koleksi proyek terkunci hingga workflow selesai atau dibatalkan. Tunggu pengindeksan PDF selesai sebelum memulai workflow. Jawaban chat memeriksa ulang sumber sebelum disimpan, dan tautan sumber historis disembunyikan setelah indeks berubah. Batch embedding berhasil disimpan sementara dalam cache agar retry tidak mengulang seluruh PDF.
 
@@ -200,7 +210,7 @@ Matriks, kandidat celah, klaim, dan ekspor mengikuti run terbaru; analisis setia
 | PDF queued | Hidupkan worker dan periksa log/status. |
 | Retrieval kosong setelah ganti model | Indeks ulang dengan --force dan tunggu selesai. |
 | Vector tidak tersedia | Pasang extension yang cocok, aktifkan di database, jalankan ai:setup-vector. |
-| PostgreSQL menolak koneksi | Periksa cluster/port 5432 atau 55433 dan .env. |
+| PostgreSQL menolak koneksi | Periksa cluster, DB_PORT di .env (5432 untuk contoh instalasi baru; 54329 untuk runtime portabel), dan port yang dicadangkan Windows. |
 | npm ditolak PowerShell | Gunakan npm.cmd. |
 | Perubahan konfigurasi belum berlaku | config:clear, queue:restart, lalu hidupkan worker kembali. |
 | PDF pindai | Gunakan PDF teks; OCR belum tersedia. |

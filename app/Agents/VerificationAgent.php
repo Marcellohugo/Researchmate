@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Agents;
 
 use App\Models\Claim;
+use App\Services\Academic\ProjectPaperMetadata;
 use App\Services\AI\AbstractAgent;
 use App\Services\AI\AgentContext;
 use App\Services\AI\AgentResult;
@@ -64,8 +65,10 @@ class VerificationAgent extends AbstractAgent
             $validated[] = ['claim_id' => $claim->id, 'status' => $status, 'feedback' => $check['feedback'] ?? 'Pemeriksaan model tidak mencakup klaim ini.'];
         }
         $metadata = [];
+        $projectMetadata = app(ProjectPaperMetadata::class);
         foreach ($context->project->papers()->wherePivot('is_selected', true)->get() as $paper) {
-            $status = 'metadata_unverified';
+            $paper = $projectMetadata->apply($paper, $context->project);
+            $status = $paper->metadata_source === 'user_reviewed' ? 'metadata_human_reviewed' : 'metadata_unverified';
             $context->project->refresh();
             if ($context->project->research_mode === 'online' && $paper->doi !== null) {
                 try {
@@ -75,7 +78,7 @@ class VerificationAgent extends AbstractAgent
                     similar_text(mb_strtolower($paper->title), mb_strtolower(is_string($title) ? $title : ''), $similarity);
                     $status = $record !== null && $similarity >= 80 ? 'verified' : 'needs_human_review';
                 } catch (\Throwable) {
-                    $status = 'metadata_unverified';
+                    $status = $paper->metadata_source === 'user_reviewed' ? 'metadata_human_reviewed' : 'metadata_unverified';
                 }
             }
             $metadata[] = ['paper_id' => $paper->id, 'status' => $status];

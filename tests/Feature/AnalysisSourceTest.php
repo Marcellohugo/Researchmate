@@ -14,7 +14,7 @@ class AnalysisSourceTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_long_article_includes_opening_and_late_research_sections_within_budget(): void
+    public function test_long_article_keeps_every_indexed_chunk_in_source_order(): void
     {
         Http::preventStrayRequests();
         $project = ResearchProject::factory()->create();
@@ -29,17 +29,17 @@ class AnalysisSourceTest extends TestCase
 
         $sources = app(AnalysisSourceService::class)->forPaper($project, $paper);
 
-        $this->assertCount(12, $sources);
+        $this->assertCount(100, $sources);
         $this->assertSame(1, $sources->first()->page_number);
         $this->assertSame(100, $sources->last()->page_number);
         foreach (['Metode', 'Results', 'Pembahasan', 'Conclusion', 'Keterbatasan'] as $section) {
             $this->assertContains($section, $sources->pluck('section_name')->all());
         }
-        $this->assertCount(12, array_unique($sources->modelKeys()));
+        $this->assertSame($document->chunks()->orderBy('chunk_index')->pluck('id')->all(), $sources->modelKeys());
         Http::assertNothingSent();
     }
 
-    public function test_article_without_detected_headings_is_sampled_across_its_length(): void
+    public function test_article_without_detected_headings_keeps_all_its_text(): void
     {
         $project = ResearchProject::factory()->create();
         $paper = Paper::query()->create(['title' => 'Artikel tanpa heading']);
@@ -48,11 +48,11 @@ class AnalysisSourceTest extends TestCase
 
         $sources = app(AnalysisSourceService::class)->forPaper($project, $paper);
 
-        $this->assertCount(12, $sources);
+        $this->assertCount(40, $sources);
         $this->assertSame(1, $sources->first()->page_number);
         $this->assertSame(40, $sources->last()->page_number);
         $this->assertTrue($sources->contains(fn ($chunk) => $chunk->page_number >= 15 && $chunk->page_number <= 25));
-        $this->assertCount(12, array_unique($sources->modelKeys()));
+        $this->assertCount(40, array_unique($sources->modelKeys()));
     }
 
     public function test_short_article_keeps_all_chunks_and_excludes_other_or_unindexed_documents(): void
@@ -77,6 +77,51 @@ class AnalysisSourceTest extends TestCase
         $paper = Paper::query()->create(['title' => 'Abstrak saja']);
 
         $this->assertCount(0, app(AnalysisSourceService::class)->forPaper($project, $paper));
+    }
+
+    public function test_combined_documents_cannot_silently_exceed_article_chunk_limit(): void
+    {
+        config(['ai.max_document_chunks' => 12]);
+        $project = ResearchProject::factory()->create();
+        $paper = Paper::query()->create(['title' => 'Artikel dengan PDF duplikat']);
+        $this->chunks($this->document($project, $paper), array_fill(0, 8, 'Results'));
+        $this->chunks($this->document($project, $paper), array_fill(0, 5, 'Conclusion'));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('melampaui batas 12 potongan');
+        app(AnalysisSourceService::class)->forPaper($project, $paper);
+    }
+
+    public function test_custom_large_chunks_are_batched_by_character_budget_without_truncation(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $paper = Paper::query()->create(['title' => 'Artikel dengan potongan besar']);
+        $document = $this->document($project, $paper);
+        $this->chunks($document, array_fill(0, 5, null));
+        $document->chunks()->update(['content' => str_repeat('a', 6000)]);
+        $service = app(AnalysisSourceService::class);
+        $chunks = $service->forPaper($project, $paper);
+        $batches = $service->batches($chunks);
+
+        $this->assertCount(3, $batches);
+        $this->assertSame($chunks->modelKeys(), array_merge(...array_map(fn ($batch): array => $batch->modelKeys(), $batches)));
+        foreach ($batches as $batch) {
+            $this->assertLessThanOrEqual(14400, $batch->sum(fn ($chunk): int => mb_strlen($chunk->content)));
+        }
+        $this->assertSame(30000, $chunks->sum(fn ($chunk): int => mb_strlen($chunk->content)));
+    }
+
+    public function test_oversized_legacy_chunk_is_rejected_before_generation_instead_of_truncated(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $paper = Paper::query()->create(['title' => 'Artikel dengan potongan terlalu besar']);
+        $document = $this->document($project, $paper);
+        $this->chunks($document, [null]);
+        $document->chunks()->update(['content' => str_repeat('a', 14401)]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Indeks ulang PDF');
+        app(AnalysisSourceService::class)->forPaper($project, $paper);
     }
 
     private function document(ResearchProject $project, Paper $paper, string $status = 'indexed'): Document

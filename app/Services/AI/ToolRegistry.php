@@ -12,6 +12,7 @@ use App\Models\ResearchProject;
 use App\Models\ResearchRun;
 use App\Services\Academic\CrossrefService;
 use App\Services\Academic\OpenAlexService;
+use App\Services\Academic\ProjectPaperMetadata;
 use App\Services\Documents\RetrievalService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
@@ -19,7 +20,7 @@ use Illuminate\Support\Str;
 
 class ToolRegistry
 {
-    public function __construct(private OpenAlexService $openalex, private CrossrefService $crossref, private RetrievalService $retrieval) {}
+    public function __construct(private OpenAlexService $openalex, private CrossrefService $crossref, private RetrievalService $retrieval, private ProjectPaperMetadata $metadata) {}
 
     /** @return array<string, array<string, mixed>> */
     private function specifications(): array
@@ -105,7 +106,7 @@ class ToolRegistry
                 'search_openalex' => $this->search($context, (string) $arguments['query']),
                 'get_paper_metadata' => ['metadata' => $this->crossref->metadata((string) $arguments['doi'])],
                 'normalize_doi' => ['doi' => OpenAlexService::normalizeDoi((string) $arguments['doi'])],
-                'search_project_documents' => ['papers' => $context->project->papers()->whereHas('documents', fn ($query) => $query->where('project_id', $context->project->id))->limit((int) config('ai.max_papers', 20))->get()->map(fn ($paper) => $paper->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()],
+                'search_project_documents' => ['papers' => $context->project->papers()->whereHas('documents', fn ($query) => $query->where('project_id', $context->project->id))->limit((int) config('ai.max_papers', 20))->get()->map(fn ($paper) => $this->metadata->apply($paper, $context->project)->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()],
                 'retrieve_document_chunks' => ['chunks' => $this->retrieval->retrieve($context->project, (string) $arguments['query'])],
                 'get_literature_matrix' => ['analyses' => PaperAnalysis::query()->where('project_id', $context->project->id)->where('run_id', $context->run->id)->get()->toArray()],
                 'verify_claim_evidence' => $this->verifyEvidence($context, $arguments['references']),
@@ -140,7 +141,7 @@ class ToolRegistry
 
         $ids = $this->openalex->save($context->project, $records, $context->run);
 
-        return ['paper_ids' => $ids, 'papers' => $context->project->papers()->whereIn('papers.id', $ids)->get()->map(fn ($paper) => $paper->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()];
+        return ['paper_ids' => $ids, 'papers' => $context->project->papers()->whereIn('papers.id', $ids)->get()->map(fn ($paper) => $this->metadata->apply($paper, $context->project)->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()];
     }
 
     /** @param list<array<string, mixed>> $references

@@ -6,6 +6,8 @@ Suite standar memakai SQLite :memory:, HTTP mock, token fixture, cache/session a
 
 Mock menguji kontrak API, validasi, kepemilikan, transisi, bounded retry, kegagalan, dan sumber. PostgreSQL menguji FK/JSONB/vector cosine sebenarnya. Test gateway nyata opsional menguji layanan Senopati, model chat/embedding, vektor finite, dan JSON schema. Hasil akademik tetap perlu tinjauan manusia.
 
+Ekspor Word/PDF menggunakan PHPWord dan Dompdf dengan ekstensi PHP gd, zip, mbstring, serta dom. Test renderer memeriksa isi DOCX/XML dan teks PDF, tanpa menghubungi Senopati. Pemeriksaan struktur dan teks bukan pengganti pemeriksaan tata letak visual.
+
 ## Perintah standar
 
 ```powershell
@@ -20,6 +22,9 @@ composer test menjalankan Pint, PHPStan level 7, serta PHPUnit. Test terarah:
 ```powershell
 php vendor/bin/phpunit tests/Feature/SenopatiServiceTest.php tests/Feature/AiServiceTest.php
 php vendor/bin/phpunit tests/Feature/DocumentRagTest.php tests/Feature/ResearchWorkflowTest.php
+php vendor/bin/phpunit tests/Feature/AnalysisSourceTest.php tests/Feature/DeepAnalysisTest.php
+php vendor/bin/phpunit tests/Feature/PaperMetadataTest.php tests/Feature/CitationFormatterTest.php
+php vendor/bin/phpunit tests/Feature/ReportDocumentRendererTest.php tests/Feature/ReportExportTest.php
 ```
 
 ## PostgreSQL khusus
@@ -27,8 +32,8 @@ php vendor/bin/phpunit tests/Feature/DocumentRagTest.php tests/Feature/ResearchW
 Administrator membuat database khusus milik role aplikasi dan mengaktifkan extension vector. Contoh runtime portabel, sesuaikan port/admin:
 
 ```powershell
-createdb -h 127.0.0.1 -p 55433 -U postgres -O researchmate researchmate_testing
-psql -h 127.0.0.1 -p 55433 -U postgres -d researchmate_testing -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+createdb -h 127.0.0.1 -p 54329 -U postgres -O researchmate researchmate_testing
+psql -h 127.0.0.1 -p 54329 -U postgres -d researchmate_testing -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 ```
 
 Gunakan terminal test terpisah agar override tidak memengaruhi aplikasi:
@@ -37,7 +42,7 @@ Gunakan terminal test terpisah agar override tidak memengaruhi aplikasi:
 $env:APP_ENV = 'testing'
 $env:DB_CONNECTION = 'pgsql'
 $env:DB_HOST = '127.0.0.1'
-$env:DB_PORT = '55433'
+$env:DB_PORT = '54329'
 $env:DB_DATABASE = 'researchmate_testing'
 $env:DB_USERNAME = 'researchmate'
 $env:DB_URL = ''
@@ -73,13 +78,18 @@ Pada 11 Oktober 2026, test gateway nyata lulus **1 test / 7 assertion**. Model e
 | Embedding | Respons sesuai input/index, finite/nonzero, dimensi konsisten, urutan respons |
 | PDF/RAG | MIME/header/ukuran/hash, parsing/halaman, chunk, indeks atomik, cosine/scoping, sumber asli, citation palsu |
 | Workflow | Enam agen, allowlist/budget, checkpoint, bounded revision, retry/recovery/cancel/approval |
+| Analisis artikel | Seluruh chunk terindeks, batas batch/teks, penggabungan hierarkis, satu generasi per eksekusi, checkpoint/retry, pembatalan, kutipan sesuai lingkup sumber |
 | Akademik | OpenAlex/Crossref, cache/timeout/dedup, mode dokumen lokal tidak mengakses API akademik |
+| Metadata/sitasi | Override per proyek, validasi DOI/URL/penulis, penguncian saat workflow aktif, APA/IEEE, metadata tidak lengkap, isolasi artikel bersama |
+| Ekspor | Markdown terbaca, DOCX/XML, teks PDF, run terbaru, status draf, metadata proyek, jenis berkas/MIME, unduhan privat dan policy |
 | UI/API | Halaman terhubung, hitungan nyata, policy, laporan privat, JSON status tanpa path privat |
 
 ## Hasil terakhir
 
-Pada 14 Oktober 2026, suite SQLite lulus **128 test: 126 lulus, 2 dilewati, 648 assertion**; dua skip merupakan gateway nyata opsional dan pemeriksaan khusus PostgreSQL. Suite PostgreSQL lulus **128 test: 127 lulus, 1 dilewati, 653 assertion**. Pint dan PHPStan lulus. CI menjalankan build, pemeriksaan gaya, analisis statis, dan suite PostgreSQL pada setiap push ke main; hasil tiap commit tersedia di GitHub Actions.
+CI menjalankan build, pemeriksaan gaya, analisis statis, dan suite PostgreSQL pada setiap push ke main; hasil tiap commit tersedia di GitHub Actions. Suite standar melewati test gateway nyata opsional, sedangkan suite SQLite juga melewati pemeriksaan khusus PostgreSQL. Jalankan keduanya untuk memeriksa perilaku basis data yang sesuai lingkungan produksi.
 
-Regresi baru mencakup hasil terpisah per run, riwayat analisis artikel yang sama, pemulihan checkpoint historis tanpa menebak run, rollback yang menjaga riwayat, pembatalan saat inferensi, sumber chat yang berubah, larangan perubahan saat workflow aktif, batas koleksi OpenAlex, pemilihan cuplikan dari bagian akhir, dan retry embedding yang memakai ulang batch berhasil. Checkpoint embedding memakai cache aplikasi selama 24 jam, kemudian dibersihkan setelah indeks berhasil diganti; gunakan cache database/file yang persisten untuk mempertahankannya antar-worker.
+Regresi mencakup hasil terpisah per run, riwayat analisis artikel yang sama, pemulihan checkpoint historis tanpa menebak run, rollback yang menjaga riwayat, pembatalan saat inferensi, sumber chat yang berubah, larangan perubahan saat workflow aktif, batas koleksi OpenAlex, dan retry embedding yang memakai ulang batch berhasil. Checkpoint embedding memakai cache aplikasi selama 24 jam, kemudian dibersihkan setelah indeks berhasil diganti; gunakan cache database/file yang persisten untuk mempertahankannya antar-worker.
 
-Bukti demo akademik 9 Oktober ada di [demo](demo.md) dan merupakan run historis sebelum seluruh AI dipindahkan ke gateway. Mutu atribusi temuan tidak dapat dinyatakan lulus hanya berdasarkan test perangkat lunak. OCR belum tersedia; AnalysisAgent membaca maksimal 12 chunk terpilih dari bagian utama dan sampel merata per artikel. Chat memakai retrieval seluruh indeks yang cocok model/dimensi.
+Analisis bertahap menyimpan checkpoint batch dan penggabungan ringkasan pada `agent_steps`, dengan tanda tangan sumber untuk menghindari pemakaian hasil dari input berbeda. Test mencakup artikel melebihi 12 chunk, kelanjutan job yang tidak dihitung sebagai kegagalan/retry, penggunaan ulang batch berhasil, penolakan kutipan dari luar batch atau hasil penggabungan yang sah, dan batas sumber. Hasil final mencatat jumlah chunk sumber/teranalisis, jumlah batch, serta tingkat penggabungan. Metadata suntingan disimpan khusus pada `project_papers`; test memeriksa proyek lain dan artikel global tetap terisolasi. Ekspor diuji dalam ketiga format dengan metadata proyek dan sumber pada run terbaru.
+
+Bukti demo akademik 9 Oktober ada di [demo](demo.md) dan merupakan run historis sebelum seluruh AI dipindahkan ke gateway. Bukti tersebut tidak menguji mutu peringkasan seluruh teks yang ditambahkan kemudian. Mutu atribusi temuan tidak dapat dinyatakan lulus hanya berdasarkan test perangkat lunak. Analisis baru membaca seluruh chunk terindeks dalam batas konfigurasi; run historis tetap memiliki batas maksimal 12 cuplikan. OCR belum tersedia, gambar/tabel yang gagal diekstrak tidak diperiksa, dan detail dapat terlewat saat penggabungan ringkasan. Chat memakai retrieval seluruh indeks yang cocok model/dimensi. APA/IEEE tetap memerlukan tinjauan metadata dan aturan penerbit; unduhan daftar pustaka teks tidak memiliki italic atau hanging indent.

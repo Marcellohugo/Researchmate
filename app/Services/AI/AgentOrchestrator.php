@@ -103,6 +103,21 @@ class AgentOrchestrator
 
                     return in_array($status, WorkflowStateManager::STAGES, true);
                 });
+            } catch (AnalysisPendingException) {
+                $next = DB::transaction(function () use ($run, $step): bool {
+                    ResearchProject::query()->whereKey($run->project_id)->lockForUpdate()->firstOrFail();
+                    $locked = ResearchRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+                    $run->setRawAttributes($locked->getAttributes(), true);
+                    if ($run->status === 'cancelled') {
+                        $step->update(['status' => 'cancelled', 'completed_at' => now()]);
+
+                        return false;
+                    }
+                    $step->update(['status' => 'pending', 'error_message' => null]);
+                    $run->update(['status' => 'analyzing', 'current_stage' => 'analyzing', 'retry_count' => 0]);
+
+                    return true;
+                });
             } catch (\Throwable $exception) {
                 DB::transaction(function () use ($run, $step, $stage, $started, $exception): void {
                     ResearchProject::query()->whereKey($run->project_id)->lockForUpdate()->firstOrFail();
@@ -175,7 +190,12 @@ class AgentOrchestrator
                 Claim::query()->where('run_id', $context->run->id)->whereKey($check['claim_id'])->update(['verification_status' => $check['status']]);
             }
             foreach ($output['metadata_checks'] as $check) {
-                $project->papers()->where('papers.id', $check['paper_id'])->update(['metadata_verification_status' => $check['status']]);
+                $projectPaper = $project->projectPapers()->where('paper_id', $check['paper_id'])->lockForUpdate()->first();
+                if ($projectPaper !== null) {
+                    $metadata = $projectPaper->metadata_overrides ?? [];
+                    $metadata['metadata_verification_status'] = $check['status'];
+                    $projectPaper->update(['metadata_overrides' => $metadata]);
+                }
             }
         }
     }

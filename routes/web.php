@@ -30,6 +30,9 @@ Route::middleware(['auth'])->group(function () {
         Route::post('documents/{document}/reindex', [DocumentController::class, 'reindex'])->name('documents.reindex');
         Route::get('literature', [LiteratureController::class, 'index'])->name('literature.index');
         Route::post('literature/search', [LiteratureController::class, 'search'])->middleware('throttle:10,1')->name('literature.search');
+        Route::get('literature/references', [LiteratureController::class, 'references'])->name('literature.references');
+        Route::get('literature/{paper}/edit', [LiteratureController::class, 'edit'])->name('literature.edit');
+        Route::put('literature/{paper}', [LiteratureController::class, 'update'])->name('literature.update');
         Route::post('literature/select', [ResearchWorkflowController::class, 'select'])->name('literature.select');
         Route::get('matrix', [ResearchResultsController::class, 'matrix'])->name('matrix');
         Route::get('gaps', [ResearchResultsController::class, 'gaps'])->name('gaps');

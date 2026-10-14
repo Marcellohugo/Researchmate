@@ -7,6 +7,9 @@ namespace App\Http\Controllers;
 use App\Models\PaperChunk;
 use App\Models\ResearchArtifact;
 use App\Models\ResearchProject;
+use App\Services\Academic\ProjectPaperMetadata;
+use App\Services\Reports\ReportDocumentRenderer;
+use App\Services\Reports\ResearchReportContent;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
@@ -17,12 +20,15 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ResearchResultsController extends Controller
 {
-    public function matrix(ResearchProject $project, Request $request): View
+    public function matrix(ResearchProject $project, Request $request, ProjectPaperMetadata $metadata): View
     {
         Gate::authorize('view', $project);
         $input = $request->validate(['q' => 'nullable|string|max:200', 'sort' => 'nullable|in:title,year,method', 'direction' => 'nullable|in:asc,desc']);
         $run = $project->runs()->latest('id')->first();
         $analyses = $run === null ? collect() : $project->analyses()->where('run_id', $run->id)->with('paper')->get();
+        foreach ($analyses as $analysis) {
+            $analysis->setRelation('paper', $metadata->apply($analysis->paper, $project));
+        }
         if (! empty($input['q'])) {
             $query = mb_strtolower($input['q']);
             $analyses = $analyses->filter(fn ($analysis) => str_contains(mb_strtolower($analysis->paper->title.' '.json_encode($analysis->structured_analysis, JSON_UNESCAPED_UNICODE)), $query));
@@ -45,80 +51,67 @@ class ResearchResultsController extends Controller
         return view('research.gaps', ['project' => $project, 'gaps' => $run === null ? collect() : $project->gaps()->where('run_id', $run->id)->latest('id')->get()]);
     }
 
-    public function reports(ResearchProject $project): View
+    public function reports(ResearchProject $project, ProjectPaperMetadata $metadata): View
     {
         Gate::authorize('view', $project);
 
         $latestRun = $project->runs()->latest('id')->first();
+        $claims = $latestRun === null ? collect() : $project->claims()->where('run_id', $latestRun->id)->with('evidence.paper')->latest('id')->get();
+        foreach ($claims as $claim) {
+            foreach ($claim->evidence as $evidence) {
+                $evidence->setRelation('paper', $metadata->apply($evidence->paper, $project));
+            }
+        }
 
-        return view('research.reports', ['project' => $project, 'artifacts' => $project->artifacts()->latest('id')->get(), 'latestRun' => $latestRun, 'claims' => $latestRun === null ? collect() : $project->claims()->where('run_id', $latestRun->id)->with('evidence.paper')->latest('id')->get()]);
+        return view('research.reports', ['project' => $project, 'artifacts' => $project->artifacts()->latest('id')->get(), 'latestRun' => $latestRun, 'claims' => $claims]);
     }
 
-    public function export(ResearchProject $project): RedirectResponse
+    public function export(ResearchProject $project, Request $request, ResearchReportContent $content, ReportDocumentRenderer $renderer): RedirectResponse
     {
         Gate::authorize('view', $project);
+        $input = $request->validate(['format' => 'nullable|in:markdown,docx,pdf', 'citation_style' => 'nullable|in:apa,ieee']);
         $run = $project->runs()->latest('id')->first();
         if ($run === null || ! in_array($run->status, ['awaiting_approval', 'completed'], true)) {
             return back()->withErrors(['report' => 'Selesaikan verifikasi sebelum mengekspor laporan.']);
         }
-        $plan = $run->research_plan ?: ($run->workflow_state['planning'] ?? []);
-        $snapshot = $run->workflow_state['project_snapshot'] ?? [];
-        $title = $snapshot['title'] ?? $project->title;
-        $question = $snapshot['research_question'] ?? ($plan['research_question'] ?? $project->research_question);
-        $mode = $snapshot['research_mode'] ?? $project->research_mode;
-        $coverage = in_array('sections_and_distributed_samples', array_column($run->workflow_state['analyzing']['analyses'] ?? [], 'coverage_strategy'), true)
-            ? 'paling banyak 12 cuplikan terpilih per artikel, mencakup bagian utama yang terdeteksi dan sampel merata'
-            : 'paling banyak 12 cuplikan awal per artikel pada run historis';
-        $lines = ['# '.$title, '', '**Pertanyaan riset:** '.$question, '', '**Status alur:** '.$run->status, '**Status laporan:** '.($run->status === 'completed' ? 'Disetujui oleh pengguna.' : 'Draf; menunggu persetujuan pengguna.'), '**Mode literatur:** '.$mode, '', 'Celah yang ditampilkan merupakan kandidat berdasarkan koleksi proyek, bukan bukti bahwa suatu topik belum pernah diteliti.', '', '## Rencana Penelitian', '', '```json', json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), '```', '', '## Batas Analisis dan Verifikasi', '', 'Mode literatur offline membatasi sumber pada dokumen lokal. Chat, agen, dan embedding memakai gateway Senopati dan memerlukan internet.', '', 'Analisis PDF menggunakan '.$coverage.'. Status full_text menunjukkan sumber PDF tersedia, bukan bahwa seluruh isi PDF telah dianalisis. Informasi di luar cuplikan dapat terlewat.', '', 'Pencocokan kutipan memastikan teks bukti terdapat dalam sumber proyek. Penilaian hubungan makna antara klaim dan bukti dilakukan model dan tetap memerlukan tinjauan ilmiah oleh manusia. Status verified bukan jaminan kebenaran ilmiah atau kualitas penelitian.', '', 'Metadata offline tidak diverifikasi melalui layanan eksternal. Persetujuan pengguna tidak mengubah keterbatasan bukti dan metadata.', '', '## Sintesis', '', (string) ($run->workflow_state['synthesizing']['synthesis'] ?? 'Belum tersedia.'), '', '## Matriks Literatur', ''];
-        foreach ($project->analyses()->where('run_id', $run->id)->with('paper')->get() as $analysis) {
-            $lines[] = '### '.$analysis->paper->title;
-            $lines[] = 'Sumber: '.($analysis->paper->doi ? 'https://doi.org/'.$analysis->paper->doi : ($analysis->paper->source_url ?: 'Metadata lokal; DOI belum tersedia.'));
-            $lines[] = 'Akses sumber: '.$analysis->evidence_level;
-            $lines[] = 'Status verifikasi metadata: '.$analysis->paper->metadata_verification_status;
-            $lines[] = '```json';
-            $lines[] = json_encode($analysis->structured_analysis, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-            $lines[] = '```';
-        }
-        $lines = array_merge($lines, ['', '## Kandidat Celah', '']);
-        foreach ($project->gaps()->where('run_id', $run->id)->get() as $gap) {
-            $lines[] = '### '.$gap->title;
-            $lines[] = $gap->description;
-            $lines[] = '**Status bukti:** '.$gap->review_status;
-            $lines[] = '**Pertanyaan lanjutan:** '.$gap->proposed_question;
-            $lines[] = '**Keterbatasan:** '.($gap->supporting_evidence['limitations'] ?? 'Perlu tinjauan manusia.');
-            $lines[] = json_encode($gap->supporting_evidence, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-        }
-        $lines = array_merge($lines, ['', '## Verifikasi Klaim', '']);
-        foreach ($project->claims()->where('run_id', $run->id)->with('evidence')->get() as $claim) {
-            $lines[] = '- '.$claim->claim_text.' ['.$claim->verification_status.']';
-            foreach ($claim->evidence as $evidence) {
-                $lines[] = '  - Artikel #'.$evidence->paper_id.'; bagian #'.($evidence->chunk_id ?? 'abstrak').'; kutipan: '.$evidence->evidence_text;
-            }
-        }
-        $lines = array_merge($lines, ['', '## Catatan Verifikasi Akhir', '', 'Jumlah putaran revisi: '.($run->workflow_state['revision_count'] ?? 0), 'Batas revisi tercapai: '.(($run->workflow_state['revision_limit_reached'] ?? false) ? 'Ya; tinjau masalah yang belum terselesaikan.' : 'Tidak.'), '', '```json', json_encode($run->workflow_state['verifying'] ?? [], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), '```']);
-        $path = 'users/'.$project->user_id.'/projects/'.$project->id.'/reports/'.Str::uuid().'.md';
-        if (! Storage::disk('local')->put($path, implode("\n", $lines)."\n")) {
-            throw new \RuntimeException('Laporan tidak dapat disimpan pada penyimpanan lokal.');
+        $format = $input['format'] ?? 'markdown';
+        $style = $input['citation_style'] ?? 'apa';
+        $report = $content->build($project, $run, $style);
+        $bytes = $format === 'markdown' ? $content->markdown($report) : $renderer->render($report, $format);
+        $extension = $format === 'markdown' ? 'md' : $format;
+        $path = 'users/'.$project->user_id.'/projects/'.$project->id.'/reports/'.Str::uuid().'.'.$extension;
+        if (! Storage::disk('local')->put($path, $bytes)) {
+            throw new \RuntimeException('Laporan tidak dapat disimpan pada penyimpanan privat.');
         }
         try {
-            $project->artifacts()->create(['run_id' => $run->id, 'title' => $title, 'artifact_type' => 'markdown_report', 'storage_path' => $path]);
+            $project->artifacts()->create(['run_id' => $run->id, 'title' => $report['title'], 'artifact_type' => match ($format) {
+                'docx' => 'word_report', 'pdf' => 'pdf_report', default => 'markdown_report',
+            }, 'storage_path' => $path]);
         } catch (\Throwable $exception) {
             Storage::disk('local')->delete($path);
             throw $exception;
         }
 
-        return to_route('projects.reports', $project)->with('status', 'Laporan Markdown tersimpan pada penyimpanan privat.');
+        return to_route('projects.reports', $project)->with('status', 'Laporan '.match ($format) {
+            'docx' => 'Word', 'pdf' => 'PDF', default => 'Markdown',
+        }.' tersimpan pada penyimpanan privat.');
     }
 
     public function download(ResearchProject $project, ResearchArtifact $artifact): StreamedResponse
     {
         Gate::authorize('view', $project);
         abort_unless($artifact->project_id === $project->id, 404);
+        [$extension, $mime] = match ($artifact->artifact_type) {
+            'markdown_report' => ['md', 'text/markdown; charset=UTF-8'],
+            'word_report' => ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+            'pdf_report' => ['pdf', 'application/pdf'],
+            default => abort(404),
+        };
         $prefix = 'users/'.$project->user_id.'/projects/'.$project->id.'/reports/';
-        abort_unless(str_starts_with($artifact->storage_path, $prefix) && preg_match('/^[a-f0-9-]{36}\.md$/', substr($artifact->storage_path, strlen($prefix))) === 1, 404);
+        abort_unless(str_starts_with($artifact->storage_path, $prefix) && preg_match('/^[a-f0-9-]{36}\\.'.preg_quote($extension, '/').'$/', substr($artifact->storage_path, strlen($prefix))) === 1, 404);
         abort_unless(Storage::disk('local')->exists($artifact->storage_path), 404);
 
-        return Storage::disk('local')->download($artifact->storage_path, (Str::slug($project->title) ?: 'laporan-riset').'.md', ['Content-Type' => 'text/markdown; charset=UTF-8']);
+        return Storage::disk('local')->download($artifact->storage_path, (Str::slug($artifact->title ?: $project->title) ?: 'laporan-riset').'.'.$extension, ['Content-Type' => $mime]);
     }
 
     public function evidence(ResearchProject $project, PaperChunk $chunk): View
