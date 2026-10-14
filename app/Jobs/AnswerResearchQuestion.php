@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
+use App\Models\PaperChunk;
 use App\Models\ResearchMessage;
+use App\Models\ResearchProject;
 use App\Services\AI\SenopatiService;
 use App\Services\Documents\RetrievalService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
-use App\Models\PaperChunk;
 use RuntimeException;
 use Throwable;
 
@@ -74,6 +75,8 @@ class AnswerResearchQuestion implements ShouldBeUnique, ShouldQueue
                 throw new RuntimeException('Jawaban mengklaim dukungan bukti tanpa kutipan yang valid.');
             }
             DB::transaction(function () use ($message, $result, $references): void {
+                // Use the same lock as deletion/reindexing so invalidation sees the saved answer.
+                ResearchProject::query()->whereKey($message->project_id)->lockForUpdate()->firstOrFail();
                 $lockedMessage = ResearchMessage::query()->whereKey($message->id)->lockForUpdate()->firstOrFail();
                 $freshReferences = [];
                 if ($references !== []) {
@@ -83,7 +86,10 @@ class AnswerResearchQuestion implements ShouldBeUnique, ShouldQueue
                         ->lockForUpdate()->get()->keyBy('id');
                     foreach ($references as $reference) {
                         $chunk = $chunks->get((int) $reference['chunk_id']);
-                        if ($chunk === null || $chunk->content !== $reference['quote']) {
+                        if ($chunk === null || $chunk->content !== $reference['quote']
+                            || $chunk->document_id !== $reference['document_id']
+                            || $chunk->document->paper_id !== $reference['paper_id']
+                            || $chunk->page_number !== $reference['page_number']) {
                             throw new RuntimeException('Bukti berubah saat jawaban AI diproses. Silakan ulangi pertanyaan.');
                         }
                         $freshReferences[] = array_merge($reference, [

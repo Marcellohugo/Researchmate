@@ -6,6 +6,7 @@ namespace App\Services\Academic;
 
 use App\Models\Paper;
 use App\Models\ResearchProject;
+use App\Models\ResearchRun;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -125,16 +126,23 @@ class OpenAlexService
     /** @param list<array<string, mixed>> $records
      * @return list<int>
      */
-    public function save(ResearchProject $project, array $records): array
+    public function save(ResearchProject $project, array $records, ?ResearchRun $run = null): array
     {
-        return DB::transaction(function () use ($project, $records): array {
+        return DB::transaction(function () use ($project, $records, $run): array {
             $locked = ResearchProject::query()->lockForUpdate()->findOrFail($project->id);
-            $limit = min($locked->target_papers, (int) config('ai.max_papers', 20));
+            if ($run === null && $locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+                throw new \RuntimeException('Koleksi literatur tidak dapat diubah saat alur riset masih berjalan.');
+            }
+            if ($run !== null) {
+                $lockedRun = ResearchRun::query()->where('project_id', $locked->id)->whereKey($run->id)->lockForUpdate()->firstOrFail();
+                if ($lockedRun->status === 'cancelled') {
+                    throw new \RuntimeException('Alur dibatalkan; hasil penelusuran tidak disimpan.');
+                }
+            }
+            $limit = (int) config('ai.max_papers', 20);
+            $attached = array_fill_keys($locked->papers()->pluck('papers.id')->all(), true);
             $ids = [];
             foreach ($records as $rank => $record) {
-                if ($locked->papers()->count() >= $limit) {
-                    break;
-                }
                 $paper = null;
                 if (! empty($record['doi'])) {
                     $paper = Paper::query()->where('doi', $record['doi'])->first();
@@ -142,9 +150,13 @@ class OpenAlexService
                 if ($paper === null && ! empty($record['openalex_id'])) {
                     $paper = Paper::query()->where('openalex_id', $record['openalex_id'])->first();
                 }
+                if (($paper === null || ! isset($attached[$paper->id])) && count($attached) >= $limit) {
+                    continue;
+                }
                 $paper ??= Paper::query()->create($record);
                 $locked->papers()->syncWithoutDetaching([$paper->id => ['relevance_score' => max(0, 1 - $rank / max(1, count($records)))]]);
                 $ids[] = $paper->id;
+                $attached[$paper->id] = true;
             }
 
             return array_values(array_unique($ids));

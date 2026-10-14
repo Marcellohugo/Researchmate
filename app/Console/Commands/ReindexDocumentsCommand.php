@@ -30,6 +30,11 @@ class ReindexDocumentsCommand extends Command
 
             return self::FAILURE;
         }
+        if ($project->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
+            $this->error('Batalkan atau selesaikan alur riset sebelum indeks ulang.');
+
+            return self::FAILURE;
+        }
         if ($project->documents()->whereIn('extraction_status', ['processing', 'queued'])->exists()) {
             $this->error('Tunggu pekerjaan dokumen aktif selesai sebelum indeks ulang.');
 
@@ -37,12 +42,19 @@ class ReindexDocumentsCommand extends Command
         }
         try {
             $embedding = $ai->generateEmbedding('Validasi model sebelum indeks ulang.');
-            $ids = $project->documents()->pluck('id');
-            DB::transaction(function () use ($project, $ids): void {
-                $project->documents()->update(['extraction_status' => 'queued', 'error_message' => null]);
+            $ids = DB::transaction(function () use ($project) {
+                $locked = ResearchProject::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
+                if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()
+                    || $locked->documents()->whereIn('extraction_status', ['processing', 'queued'])->exists()) {
+                    throw new \RuntimeException('Tunggu pekerjaan aktif selesai sebelum indeks ulang.');
+                }
+                $ids = $locked->documents()->pluck('id');
+                $locked->documents()->update(['extraction_status' => 'queued', 'error_message' => null]);
                 foreach ($ids as $id) {
                     ProcessDocument::dispatch((int) $id, true)->afterCommit();
                 }
+
+                return $ids;
             });
             $this->info(count($ids).' PDF diantrekan dengan model '.config('ai.embed_model').' ('.count($embedding).' dimensi). Indeks lama diganti secara atomik setelah tiap PDF berhasil.');
 

@@ -57,7 +57,7 @@ Pengguna memilih sumber sebelum analisis. Matriks menampilkan informasi ditemuka
 
 ## 10. Pemecahan masalah
 
-Online gagal TLS: periksa CA bundle PHP dan restart proses. `401`/`403`: periksa key lokal; `429`: tunggu sebelum mengulang. Metadata saja tidak membuat PDF otomatis tersedia. **AnalysisAgent memakai maksimal 12 chunk pertama per artikel**; `full_text` berarti PDF terindeks tersedia, bukan seluruh teks dibaca model. Informasi di halaman akhir/tabel mungkin tidak tercakup: periksa PDF dan gunakan chat retrieval untuk tinjauan tambahan. Jangan menafsirkan kandidat celah sebagai survei seluruh literatur dunia.
+Online gagal TLS: periksa CA bundle PHP dan restart proses. `401`/`403`: periksa key lokal; `429`: tunggu sebelum mengulang. Metadata saja tidak membuat PDF otomatis tersedia. **AnalysisAgent memakai maksimal 12 chunk terpilih per artikel dari bagian utama dan sampel merata**; `full_text` berarti PDF terindeks tersedia, bukan seluruh teks dibaca model. Informasi di halaman akhir/tabel mungkin tidak tercakup: periksa PDF dan gunakan chat retrieval untuk tinjauan tambahan. Jangan menafsirkan kandidat celah sebagai survei seluruh literatur dunia.
 
 ## 11. Checklist penyelesaian
 

@@ -96,8 +96,9 @@ class DocumentController extends Controller
             if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()) {
                 throw ValidationException::withMessages(['workflow' => 'PDF tidak dapat diubah saat alur riset masih berjalan.']);
             }
-            $evidenceInvalidation->invalidate($document);
-            $document->delete();
+            $lockedDocument = Document::query()->lockForUpdate()->where('project_id', $project->id)->findOrFail($document->id);
+            $evidenceInvalidation->invalidate($lockedDocument);
+            $lockedDocument->delete();
             DB::afterCommit(fn () => Storage::disk('local')->delete($path));
         });
 

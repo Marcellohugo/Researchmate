@@ -63,4 +63,20 @@ class AcademicServiceTest extends TestCase
         app(OpenAlexService::class)->search('AI');
         Http::assertSent(fn (Request $request) => $request->hasHeader('Authorization', 'Bearer fixture-key') && ! str_contains($request->url(), 'fixture-key'));
     }
+
+    public function test_repeated_search_respects_project_capacity_and_returns_existing_papers(): void
+    {
+        config(['ai.max_papers' => 2]);
+        $project = ResearchProject::factory()->create(['research_mode' => 'online', 'target_papers' => 2]);
+        $service = app(OpenAlexService::class);
+        $record = fn ($id) => ['title' => 'Artikel '.$id, 'doi' => '10.1234/'.$id, 'metadata_source' => 'openalex'];
+        $first = $service->save($project, [$record(1)]);
+        $second = $service->save($project, [$record(2), $record(3)]);
+        $again = $service->save($project, [$record(1), $record(4)]);
+
+        $this->assertCount(1, $second);
+        $this->assertSame($first, $again);
+        $this->assertDatabaseCount('project_papers', 2);
+        $this->assertDatabaseCount('papers', 2);
+    }
 }

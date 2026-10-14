@@ -186,7 +186,9 @@ php artisan ai:check
 
 Suite menggunakan HTTP mock, database test terpisah, serta test gateway nyata opsional. [Testing](docs/testing.md) mencatat hasil yang benar-benar dijalankan. CI remote belum dikonfirmasi. Kegagalan koneksi/token/kuota/schema tidak diganti dengan hasil rekaan.
 
-OCR belum tersedia. Analisis agen membaca maksimal **12 chunk awal per artikel**, sedangkan chat memakai retrieval seluruh indeks yang sesuai. Status full_text berarti PDF tersedia, bukan seluruh artikel dibaca model. Kutipan yang cocok tidak menjamin atribusi atau kesimpulan ilmiah benar. Kandidat celah hanya berlaku pada koleksi proyek; metadata dokumen lokal tetap belum diverifikasi eksternal. Persetujuan pengguna tidak mengubah batas ini.
+OCR belum tersedia. Analisis agen membaca maksimal **12 chunk terpilih per artikel dari bagian utama dan sampel merata**, sedangkan chat memakai retrieval seluruh indeks yang sesuai. Status full_text berarti PDF tersedia, bukan seluruh artikel dibaca model. Kutipan yang cocok tidak menjamin atribusi atau kesimpulan ilmiah benar. Kandidat celah hanya berlaku pada koleksi proyek; metadata dokumen lokal tetap belum diverifikasi eksternal. Persetujuan pengguna tidak mengubah batas ini.
+
+Matriks, kandidat celah, klaim, dan ekspor mengikuti run terbaru; analisis setiap run disimpan terpisah. Pengaturan dan koleksi proyek terkunci hingga workflow selesai atau dibatalkan. Tunggu pengindeksan PDF selesai sebelum memulai workflow. Jawaban chat memeriksa ulang sumber sebelum disimpan, dan tautan sumber historis disembunyikan setelah indeks berubah. Batch embedding berhasil disimpan sementara dalam cache agar retry tidak mengulang seluruh PDF.
 
 ## Pemecahan masalah
 

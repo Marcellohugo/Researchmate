@@ -8,9 +8,12 @@ use App\Models\AgentStep;
 use App\Models\PaperAnalysis;
 use App\Models\PaperChunk;
 use App\Models\ResearchGap;
+use App\Models\ResearchProject;
+use App\Models\ResearchRun;
 use App\Services\Academic\CrossrefService;
 use App\Services\Academic\OpenAlexService;
 use App\Services\Documents\RetrievalService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 
@@ -98,7 +101,7 @@ class ToolRegistry
             'status' => 'running', 'input_payload' => $arguments, 'started_at' => now(),
         ]);
         try {
-            $result = match ($name) {
+            $invoke = fn (): array => match ($name) {
                 'search_openalex' => $this->search($context, (string) $arguments['query']),
                 'get_paper_metadata' => ['metadata' => $this->crossref->metadata((string) $arguments['doi'])],
                 'normalize_doi' => ['doi' => OpenAlexService::normalizeDoi((string) $arguments['doi'])],
@@ -110,6 +113,17 @@ class ToolRegistry
                 'save_research_gap' => $this->saveGap($context, $arguments),
                 default => throw new \RuntimeException('Implementasi alat tidak tersedia.'),
             };
+            $result = in_array($name, ['save_paper_analysis', 'save_research_gap'], true)
+                ? DB::transaction(function () use ($context, $invoke): array {
+                    ResearchProject::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
+                    $run = ResearchRun::query()->whereKey($context->run->id)->where('project_id', $context->project->id)->lockForUpdate()->firstOrFail();
+                    if ($run->status === 'cancelled') {
+                        throw new \RuntimeException('Alur dibatalkan; penyimpanan hasil dihentikan.');
+                    }
+
+                    return $invoke();
+                })
+                : $invoke();
             $step->update(['status' => 'completed', 'output_payload' => $result, 'completed_at' => now(), 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
 
             return $result;
@@ -124,7 +138,9 @@ class ToolRegistry
     {
         $records = $this->openalex->search($query, $context->project->year_from, $context->project->year_to, (int) config('ai.max_papers', 20));
 
-        return ['paper_ids' => $this->openalex->save($context->project, $records), 'papers' => $records];
+        $ids = $this->openalex->save($context->project, $records, $context->run);
+
+        return ['paper_ids' => $ids, 'papers' => $context->project->papers()->whereIn('papers.id', $ids)->get()->map(fn ($paper) => $paper->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()];
     }
 
     /** @param list<array<string, mixed>> $references

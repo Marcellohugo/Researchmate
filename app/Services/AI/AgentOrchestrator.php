@@ -9,6 +9,7 @@ use App\Models\AgentStep;
 use App\Models\Claim;
 use App\Models\PaperAnalysis;
 use App\Models\ResearchGap;
+use App\Models\ResearchProject;
 use App\Models\ResearchRun;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -43,9 +44,12 @@ class AgentOrchestrator
             $state = $run->workflow_state ?? [];
             $revision = (int) ($state['revision_count'] ?? 0);
             $stepName = $stage.':'.$revision;
+            if (ResearchRun::query()->whereKey($run->id)->whereNotIn('status', ['awaiting_paper_selection', 'awaiting_approval', 'completed', 'cancelled'])
+                ->update(['status' => $stage, 'started_at' => $run->started_at ?? now()]) !== 1) {
+                return;
+            }
             $step = AgentStep::query()->firstOrCreate(['run_id' => $run->id, 'step_name' => $stepName], ['agent_name' => $agent->name(), 'status' => 'pending']);
             $started = microtime(true);
-            $run->update(['status' => $stage, 'started_at' => $run->started_at ?? now()]);
             $input = match ($stage) {
                 'planning', 'discovering' => ['research_plan' => $run->research_plan ?? []],
                 'analyzing' => [],
@@ -68,6 +72,7 @@ class AgentOrchestrator
                     $output = $agent->execute($context)->output;
                 }
                 $next = DB::transaction(function () use ($run, $step, $stage, $output, $context, $started): bool {
+                    ResearchProject::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
                     $locked = ResearchRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
                     $run->setRawAttributes($locked->getAttributes(), true);
                     if ($run->status === 'cancelled') {
@@ -99,18 +104,22 @@ class AgentOrchestrator
                     return in_array($status, WorkflowStateManager::STAGES, true);
                 });
             } catch (\Throwable $exception) {
-                $run->refresh();
-                if ($run->status !== 'cancelled') {
-                    $state = $run->workflow_state ?? [];
-                    $state['error'] = mb_substr($exception->getMessage(), 0, 2000);
-                    $failures = $state['failures'] ?? [];
-                    $failures[] = ['stage' => $stage, 'error' => $state['error'], 'at' => now()->toIso8601String(), 'attempt' => $run->retry_count + 1];
-                    $state['failures'] = array_slice($failures, -30);
-                    $run->update(['status' => 'failed', 'retry_count' => $run->retry_count + 1, 'workflow_state' => $state]);
-                    $step->update(['status' => 'failed', 'error_message' => mb_substr($exception->getMessage(), 0, 2000), 'completed_at' => now(), 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
-                } else {
-                    $step->update(['status' => 'cancelled', 'completed_at' => now()]);
-                }
+                DB::transaction(function () use ($run, $step, $stage, $started, $exception): void {
+                    ResearchProject::query()->whereKey($run->project_id)->lockForUpdate()->firstOrFail();
+                    $locked = ResearchRun::query()->whereKey($run->id)->lockForUpdate()->firstOrFail();
+                    $run->setRawAttributes($locked->getAttributes(), true);
+                    if ($run->status !== 'cancelled') {
+                        $state = $run->workflow_state ?? [];
+                        $state['error'] = mb_substr($exception->getMessage(), 0, 2000);
+                        $failures = $state['failures'] ?? [];
+                        $failures[] = ['stage' => $stage, 'error' => $state['error'], 'at' => now()->toIso8601String(), 'attempt' => $run->retry_count + 1];
+                        $state['failures'] = array_slice($failures, -30);
+                        $run->update(['status' => 'failed', 'retry_count' => $run->retry_count + 1, 'workflow_state' => $state]);
+                        $step->update(['status' => 'failed', 'error_message' => mb_substr($exception->getMessage(), 0, 2000), 'completed_at' => now(), 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
+                    } else {
+                        $step->update(['status' => 'cancelled', 'completed_at' => now()]);
+                    }
+                });
                 throw $exception;
             }
         } finally {

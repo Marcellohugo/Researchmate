@@ -62,7 +62,14 @@ class ResearchResultsController extends Controller
             return back()->withErrors(['report' => 'Selesaikan verifikasi sebelum mengekspor laporan.']);
         }
         $plan = $run->research_plan ?: ($run->workflow_state['planning'] ?? []);
-        $lines = ['# '.$project->title, '', '**Pertanyaan riset:** '.$project->research_question, '', '**Status alur:** '.$run->status, '**Status laporan:** '.($run->status === 'completed' ? 'Disetujui oleh pengguna.' : 'Draf; menunggu persetujuan pengguna.'), '**Mode literatur:** '.$project->research_mode, '', 'Celah yang ditampilkan merupakan kandidat berdasarkan koleksi proyek, bukan bukti bahwa suatu topik belum pernah diteliti.', '', '## Rencana Penelitian', '', '```json', json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), '```', '', '## Batas Analisis dan Verifikasi', '', 'Mode literatur offline membatasi sumber pada dokumen lokal. Chat, agen, dan embedding memakai gateway Senopati dan memerlukan internet.', '', 'Analisis PDF menggunakan paling banyak 12 cuplikan awal per artikel. Status full_text menunjukkan sumber PDF tersedia, bukan bahwa seluruh isi PDF telah dianalisis. Informasi di luar cuplikan dapat terlewat.', '', 'Pencocokan kutipan memastikan teks bukti terdapat dalam sumber proyek. Penilaian hubungan makna antara klaim dan bukti dilakukan model dan tetap memerlukan tinjauan ilmiah oleh manusia. Status verified bukan jaminan kebenaran ilmiah atau kualitas penelitian.', '', 'Metadata offline tidak diverifikasi melalui layanan eksternal. Persetujuan pengguna tidak mengubah keterbatasan bukti dan metadata.', '', '## Sintesis', '', (string) ($run->workflow_state['synthesizing']['synthesis'] ?? 'Belum tersedia.'), '', '## Matriks Literatur', ''];
+        $snapshot = $run->workflow_state['project_snapshot'] ?? [];
+        $title = $snapshot['title'] ?? $project->title;
+        $question = $snapshot['research_question'] ?? ($plan['research_question'] ?? $project->research_question);
+        $mode = $snapshot['research_mode'] ?? $project->research_mode;
+        $coverage = in_array('sections_and_distributed_samples', array_column($run->workflow_state['analyzing']['analyses'] ?? [], 'coverage_strategy'), true)
+            ? 'paling banyak 12 cuplikan terpilih per artikel, mencakup bagian utama yang terdeteksi dan sampel merata'
+            : 'paling banyak 12 cuplikan awal per artikel pada run historis';
+        $lines = ['# '.$title, '', '**Pertanyaan riset:** '.$question, '', '**Status alur:** '.$run->status, '**Status laporan:** '.($run->status === 'completed' ? 'Disetujui oleh pengguna.' : 'Draf; menunggu persetujuan pengguna.'), '**Mode literatur:** '.$mode, '', 'Celah yang ditampilkan merupakan kandidat berdasarkan koleksi proyek, bukan bukti bahwa suatu topik belum pernah diteliti.', '', '## Rencana Penelitian', '', '```json', json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), '```', '', '## Batas Analisis dan Verifikasi', '', 'Mode literatur offline membatasi sumber pada dokumen lokal. Chat, agen, dan embedding memakai gateway Senopati dan memerlukan internet.', '', 'Analisis PDF menggunakan '.$coverage.'. Status full_text menunjukkan sumber PDF tersedia, bukan bahwa seluruh isi PDF telah dianalisis. Informasi di luar cuplikan dapat terlewat.', '', 'Pencocokan kutipan memastikan teks bukti terdapat dalam sumber proyek. Penilaian hubungan makna antara klaim dan bukti dilakukan model dan tetap memerlukan tinjauan ilmiah oleh manusia. Status verified bukan jaminan kebenaran ilmiah atau kualitas penelitian.', '', 'Metadata offline tidak diverifikasi melalui layanan eksternal. Persetujuan pengguna tidak mengubah keterbatasan bukti dan metadata.', '', '## Sintesis', '', (string) ($run->workflow_state['synthesizing']['synthesis'] ?? 'Belum tersedia.'), '', '## Matriks Literatur', ''];
         foreach ($project->analyses()->where('run_id', $run->id)->with('paper')->get() as $analysis) {
             $lines[] = '### '.$analysis->paper->title;
             $lines[] = 'Sumber: '.($analysis->paper->doi ? 'https://doi.org/'.$analysis->paper->doi : ($analysis->paper->source_url ?: 'Metadata lokal; DOI belum tersedia.'));
@@ -94,7 +101,7 @@ class ResearchResultsController extends Controller
             throw new \RuntimeException('Laporan tidak dapat disimpan pada penyimpanan lokal.');
         }
         try {
-            $project->artifacts()->create(['run_id' => $run->id, 'title' => $project->title, 'artifact_type' => 'markdown_report', 'storage_path' => $path]);
+            $project->artifacts()->create(['run_id' => $run->id, 'title' => $title, 'artifact_type' => 'markdown_report', 'storage_path' => $path]);
         } catch (\Throwable $exception) {
             Storage::disk('local')->delete($path);
             throw $exception;

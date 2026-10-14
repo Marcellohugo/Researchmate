@@ -130,12 +130,12 @@ class SenopatiService
      * @param  list<string>  $texts
      * @return list<list<float>>
      */
-    public function generateEmbeddings(array $texts): array
+    public function generateEmbeddings(array $texts, ?int $timeout = null): array
     {
         if ($texts === []) {
             return [];
         }
-        $data = $this->send(self::EMBEDDINGS_ENDPOINT, ['model' => config('ai.embed_model'), 'input' => $texts]);
+        $data = $this->send(self::EMBEDDINGS_ENDPOINT, ['model' => config('ai.embed_model'), 'input' => $texts], $timeout);
         $items = $data['data'] ?? null;
         if (! is_array($items) || count($items) !== count($texts)) {
             throw new RuntimeException('Jumlah embedding Senopati tidak sesuai jumlah teks.');
@@ -210,7 +210,7 @@ class SenopatiService
      * @param  array<string, mixed>|null  $payload
      * @return array<string, mixed>
      */
-    private function send(string $endpoint, ?array $payload = null): array
+    private function send(string $endpoint, ?array $payload = null, ?int $timeout = null): array
     {
         $key = (string) config('ai.senopati_key');
         if (trim($key) === '') {
@@ -218,7 +218,7 @@ class SenopatiService
         }
         try {
             $request = Http::withToken($key)->acceptJson()->connectTimeout(10)
-                ->timeout(max(1, min(1800, (int) config('ai.senopati_timeout', 300))))
+                ->timeout(max(1, min(1800, $timeout ?? (int) config('ai.senopati_timeout', 300))))
                 ->withOptions(['allow_redirects' => false]);
             $response = $payload === null ? $request->get($endpoint) : $request->post($endpoint, $payload);
         } catch (ConnectionException) {

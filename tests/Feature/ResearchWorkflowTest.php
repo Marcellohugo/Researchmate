@@ -2,7 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Agents\AnalysisAgent;
 use App\Agents\DiscoveryAgent;
+use App\Agents\ResearchGapAgent;
 use App\Jobs\RunResearchWorkflow;
 use App\Models\AgentStep;
 use App\Models\Claim;
@@ -11,7 +13,6 @@ use App\Models\Paper;
 use App\Models\PaperAnalysis;
 use App\Models\PaperChunk;
 use App\Models\ResearchProject;
-use App\Models\ResearchGap;
 use App\Models\ResearchRun;
 use App\Models\User;
 use App\Services\AI\AgentContext;
@@ -22,10 +23,12 @@ use App\Services\AI\WorkflowStateManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\GatewayFixture;
 use Tests\TestCase;
 
@@ -126,7 +129,7 @@ class ResearchWorkflowTest extends TestCase
         $this->assertStringContainsString('Membandingkan temuan', $draft);
         $this->assertStringContainsString('Status verifikasi metadata: metadata_unverified', $draft);
         $this->assertStringContainsString('metodologi belum dilaporkan', $draft);
-        $this->assertStringContainsString('paling banyak 12 cuplikan awal', $draft);
+        $this->assertStringContainsString('paling banyak 12 cuplikan terpilih', $draft);
         $this->assertStringContainsString('bukan jaminan kebenaran ilmiah', $draft);
         $this->post(route('projects.workflow.approve', $project), ['approval' => '1'])->assertRedirect(route('projects.reports', $project));
         $this->assertSame('completed', $run->fresh()->status);
@@ -322,6 +325,109 @@ class ResearchWorkflowTest extends TestCase
         $report = Storage::disk('local')->get($artifact->storage_path);
         $this->assertStringContainsString('Artikel terbaru', $report);
         $this->assertStringNotContainsString('Artikel lama', $report);
+    }
+
+    public function test_report_keeps_original_project_question_after_project_settings_change(): void
+    {
+        Storage::fake('local');
+        $project = ResearchProject::factory()->create(['title' => 'Judul awal', 'research_question' => 'Pertanyaan awal']);
+        $run = app(WorkflowStateManager::class)->start($project);
+        $run->update(['status' => 'completed']);
+        $project->update(['title' => 'Judul disunting', 'research_question' => 'Pertanyaan disunting']);
+
+        $this->actingAs($project->user)->post(route('projects.reports.export', $project))->assertRedirect();
+        $artifact = $project->artifacts()->firstOrFail();
+        $report = Storage::disk('local')->get($artifact->storage_path);
+        $this->assertSame('Judul awal', $artifact->title);
+        $this->assertStringContainsString('Pertanyaan awal', $report);
+        $this->assertStringNotContainsString('Pertanyaan disunting', $report);
+    }
+
+    public function test_cancelling_during_analysis_does_not_save_a_paper_checkpoint(): void
+    {
+        Queue::fake();
+        Http::preventStrayRequests();
+        $project = ResearchProject::factory()->create();
+        $chunk = $this->source($project);
+        $project->papers()->updateExistingPivot($chunk->document->paper_id, ['is_selected' => true]);
+        $states = app(WorkflowStateManager::class);
+        $run = $states->start($project);
+        $run->update(['status' => 'analyzing', 'current_stage' => 'analyzing']);
+        Http::fake([SenopatiService::ENDPOINT => function () use ($states, $project, $chunk) {
+            $states->cancel($project);
+
+            return Http::response(GatewayFixture::chat(json_encode([
+                'title' => 'Hasil terlambat', 'research_objective' => null, 'methodology' => null, 'research_design' => null,
+                'sample' => null, 'variables' => null, 'main_findings' => 'Analisis terlambat.', 'limitations' => null, 'recommendations' => null,
+                'evidence_references' => [['paper_id' => $chunk->document->paper_id, 'chunk_id' => $chunk->id, 'quote' => self::QUOTE]],
+                'source_access_level' => 'full_text', 'analysis_status' => 'supported',
+            ])));
+        }]);
+
+        app(AgentOrchestrator::class)->run($run);
+
+        $this->assertSame('cancelled', $run->fresh()->status);
+        $this->assertDatabaseCount('paper_analyses', 0);
+        $this->assertDatabaseMissing('agent_steps', ['run_id' => $run->id, 'step_name' => 'analysis:paper:'.$chunk->document->paper_id]);
+        Queue::assertNothingPushed();
+    }
+
+    public function test_workflow_waits_for_document_indexing_before_start(): void
+    {
+        Queue::fake();
+        $project = ResearchProject::factory()->create();
+        $chunk = $this->source($project);
+        $chunk->document->update(['extraction_status' => 'queued']);
+
+        $this->actingAs($project->user)->post(route('projects.workflow.start', $project))->assertSessionHasErrors('workflow');
+        $this->assertDatabaseCount('research_runs', 0);
+        Queue::assertNothingPushed();
+
+        $chunk->document->update(['extraction_status' => 'indexed']);
+        $this->post(route('projects.workflow.start', $project))->assertSessionHasNoErrors();
+        Queue::assertPushed(RunResearchWorkflow::class);
+    }
+
+    /** @return array<string, array{string, bool}> */
+    public static function mutatingTools(): array
+    {
+        return [
+            'save analysis' => ['save_paper_analysis', false], 'cancel analysis' => ['save_paper_analysis', true],
+            'save gap' => ['save_research_gap', false], 'cancel gap' => ['save_research_gap', true],
+        ];
+    }
+
+    #[DataProvider('mutatingTools')]
+    public function test_mutating_tools_check_cancellation_at_the_save_boundary(string $tool, bool $cancel): void
+    {
+        Http::preventStrayRequests();
+        $project = ResearchProject::factory()->create();
+        $chunk = $this->source($project);
+        $paperId = $chunk->document->paper_id;
+        $project->papers()->updateExistingPivot($paperId, ['is_selected' => true]);
+        $states = app(WorkflowStateManager::class);
+        $run = $states->start($project);
+        Event::listen('eloquent.created: '.AgentStep::class, function (AgentStep $step) use ($run, $states, $project, $cancel): void {
+            if ($cancel && $step->run_id === $run->id) {
+                $states->cancel($project);
+            }
+        });
+        $reference = ['paper_id' => $paperId, 'chunk_id' => $chunk->id, 'quote' => self::QUOTE];
+        $arguments = $tool === 'save_paper_analysis'
+            ? ['paper_id' => $paperId, 'analysis' => ['source_access_level' => 'full_text', 'evidence_references' => [$reference]]]
+            : ['gap_title' => 'Celah uji', 'gap_category' => 'contextual', 'gap_description' => 'Perlu penelitian lanjutan.', 'evidence_references' => [$reference]];
+        $agent = app($tool === 'save_paper_analysis' ? AnalysisAgent::class : ResearchGapAgent::class);
+        try {
+            app(ToolRegistry::class)->execute($agent, $tool, $arguments, new AgentContext($project, $run));
+            $this->assertFalse($cancel, 'Tool seharusnya berhenti setelah pembatalan.');
+        } catch (\RuntimeException $exception) {
+            $this->assertTrue($cancel);
+            $this->assertStringContainsString('Alur dibatalkan', $exception->getMessage());
+        }
+
+        $this->assertDatabaseCount('paper_analyses', $tool === 'save_paper_analysis' && ! $cancel ? 1 : 0);
+        $this->assertDatabaseCount('research_gaps', $tool === 'save_research_gap' && ! $cancel ? 1 : 0);
+        Http::assertNothingSent();
     }
 
     public function test_tool_budget_is_persistent_and_stops_further_execution(): void

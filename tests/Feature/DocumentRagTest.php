@@ -20,6 +20,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\Support\GatewayFixture;
 use Tests\Support\PdfFixture;
@@ -209,7 +210,14 @@ class DocumentRagTest extends TestCase
         }
     }
 
-    public function test_chat_rejects_evidence_that_disappears_before_save(): void
+    /** @return array<string, array{string}> */
+    public static function evidenceMutations(): array
+    {
+        return ['deleted' => ['deleted'], 'text changed' => ['text'], 'reindex queued' => ['queued']];
+    }
+
+    #[DataProvider('evidenceMutations')]
+    public function test_chat_rejects_evidence_changed_before_save(string $mutation): void
     {
         $project = ResearchProject::factory()->create();
         $document = $this->document($project, 'indexed');
@@ -217,8 +225,12 @@ class DocumentRagTest extends TestCase
         $message = $project->messages()->create(['role' => 'assistant', 'content' => '', 'status' => 'pending']);
         Http::fake([
             SenopatiService::EMBEDDINGS_ENDPOINT => Http::response(GatewayFixture::embeddings([[1, 0, 0]])),
-            SenopatiService::ENDPOINT => function (Request $request) use ($chunk) {
-                $chunk->delete();
+            SenopatiService::ENDPOINT => function (Request $request) use ($chunk, $document, $mutation) {
+                match ($mutation) {
+                    'text' => $chunk->update(['content' => 'Teks telah berubah saat inferensi.']),
+                    'queued' => $document->update(['extraction_status' => 'queued']),
+                    default => $chunk->delete(),
+                };
 
                 return Http::response(GatewayFixture::chat(json_encode(['answer' => 'Jawaban lama.', 'evidence_status' => 'supported', 'citations' => [['chunk_id' => $chunk->id]]])));
             },
@@ -303,7 +315,56 @@ class DocumentRagTest extends TestCase
         $project->runs()->create(['status' => 'analyzing', 'current_stage' => 'analyzing']);
 
         $this->actingAs($project->user)->delete(route('projects.documents.destroy', [$project, $document]))->assertSessionHasErrors('workflow');
+        $this->post(route('projects.documents.reindex', [$project, $document]))->assertSessionHasErrors('workflow');
+        $this->post(route('projects.documents.store', $project), ['pdf' => UploadedFile::fake()->createWithContent('baru.pdf', PdfFixture::make('Bukti baru.'))])->assertSessionHasErrors('workflow');
+        $this->artisan('ai:reindex', ['project' => $project->id, '--force' => true])->assertExitCode(1);
         $this->assertDatabaseHas('documents', ['id' => $document->id]);
+        $this->assertCount(1, Storage::disk('local')->allFiles());
+        Queue::assertNothingPushed();
+        Http::assertNothingSent();
+    }
+
+    public function test_chat_warns_and_hides_links_after_source_reindex(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $document = $this->document($project, 'indexed');
+        $chunk = $this->chunk($document, [1, 0, 0]);
+        $project->messages()->create(['role' => 'assistant', 'content' => 'Jawaban historis.', 'status' => 'completed', 'evidence_status' => 'needs_human_review',
+            'error_message' => 'Dokumen sumber perlu diverifikasi ulang.', 'source_references' => [['chunk_id' => $chunk->id, 'document_id' => $document->id]]]);
+
+        $this->actingAs($project->user)->get(route('projects.chat.index', $project))->assertOk()->assertSee('Dokumen sumber perlu diverifikasi ulang.')
+            ->assertDontSee(route('projects.evidence', [$project, $chunk]), false);
+    }
+
+    public function test_indexing_retry_reuses_completed_batches_and_preserves_old_index_until_complete(): void
+    {
+        config(['ai.chunk_size' => 100, 'ai.chunk_overlap' => 0]);
+        $document = $this->document(ResearchProject::factory()->create());
+        $oldChunk = $this->chunk($document, [1, 0, 0]);
+        $text = implode(' ', array_map(fn ($number) => 'Bukti unik nomor '.$number.'.', range(1, 100)));
+        Storage::disk('local')->put($document->storage_path, PdfFixture::make($text));
+        $requests = 0;
+        Http::fake([SenopatiService::EMBEDDINGS_ENDPOINT => function (Request $request) use (&$requests) {
+            $requests++;
+            if ($requests === 2) {
+                return Http::response([], 429);
+            }
+
+            return Http::response(GatewayFixture::embeddings(array_fill(0, count($request['input']), [1, 0, 0])));
+        }]);
+        try {
+            (new ProcessDocument($document->id))->handle(app(EmbeddingService::class));
+            $this->fail('Batch gagal harus menunda penggantian indeks.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('HTTP 429', $exception->getMessage());
+            $this->assertDatabaseHas('paper_chunks', ['id' => $oldChunk->id]);
+            $this->assertSame('failed', $document->fresh()->extraction_status);
+        }
+
+        (new ProcessDocument($document->id))->handle(app(EmbeddingService::class));
+        $this->assertSame('indexed', $document->fresh()->extraction_status);
+        $this->assertDatabaseMissing('paper_chunks', ['id' => $oldChunk->id]);
+        $this->assertSame((int) ceil($document->chunks()->count() / 8) + 1, $requests);
     }
 
     private function document(ResearchProject $project, string $status = 'queued'): Document

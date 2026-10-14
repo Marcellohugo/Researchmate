@@ -6,11 +6,12 @@ namespace App\Agents;
 
 use App\Models\AgentStep;
 use App\Models\PaperAnalysis;
-use App\Models\PaperChunk;
+use App\Models\ResearchProject;
 use App\Models\ResearchRun;
 use App\Services\AI\AbstractAgent;
 use App\Services\AI\AgentContext;
 use App\Services\AI\AgentResult;
+use App\Services\Documents\AnalysisSourceService;
 use Illuminate\Support\Facades\DB;
 
 class AnalysisAgent extends AbstractAgent
@@ -58,12 +59,12 @@ class AnalysisAgent extends AbstractAgent
 
                 continue;
             }
-            $chunks = PaperChunk::query()->whereHas('document', fn ($query) => $query->where('project_id', $context->project->id)->where('paper_id', $paper->id)->where('extraction_status', 'indexed'))
-                ->orderBy('chunk_index')->limit(12)->get(['id', 'document_id', 'page_number', 'content']);
+            $chunks = app(AnalysisSourceService::class)->forPaper($context->project, $paper);
             $source = $chunks->isNotEmpty() ? 'full_text' : 'abstract_only';
             $input = ['paper' => $paper->only(['id', 'title', 'abstract', 'authors', 'publication_year']), 'source_access_level' => $source, 'chunks' => $chunks->toArray()];
             $analysis = $this->generate($context, $input)->output;
             $analysis['source_access_level'] = $source;
+            $analysis['coverage_strategy'] = 'sections_and_distributed_samples';
             $analysis['title'] = $paper->title;
             $references = array_values(array_filter($analysis['evidence_references'], fn ($reference) => ($reference['paper_id'] ?? null) === $paper->id));
             $wrongPaper = array_values(array_filter($analysis['evidence_references'], fn ($reference) => ($reference['paper_id'] ?? null) !== $paper->id));
@@ -74,6 +75,7 @@ class AnalysisAgent extends AbstractAgent
             $analysis['analysis_status'] = $evidence['valid'] === [] || $evidence['invalid'] !== [] ? 'insufficient_evidence' : 'supported';
             $analysis['paper_id'] = $paper->id;
             $saved = DB::transaction(function () use ($context, $paper, $analysis, $stepName): bool {
+                ResearchProject::query()->whereKey($context->project->id)->lockForUpdate()->firstOrFail();
                 $run = ResearchRun::query()->whereKey($context->run->id)->lockForUpdate()->firstOrFail();
                 if ($run->status === 'cancelled') {
                     return false;

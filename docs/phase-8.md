@@ -83,7 +83,7 @@ Pada 9 Oktober 2026, proyek/run 1 selesai setelah enam agen dan satu revisi. Dua
 
 ## 10. Pemecahan masalah
 
-Runtime setelah reboot: mulai PG16, kemudian server/worker. Konfigurasi berubah: clear config dan restart worker. Disk penuh/permission gagal: periksa storage sebelum mengulang. **OCR belum tersedia, analisis agen dibatasi 12 chunk awal, dan metadata offline belum diverifikasi eksternal**. Exact vector search belum memakai HNSW. Laporan saat menunggu approval merupakan draf dengan status tercantum.
+Runtime setelah reboot: mulai PG16, kemudian server/worker. Konfigurasi berubah: clear config dan restart worker. Disk penuh/permission gagal: periksa storage sebelum mengulang. **OCR belum tersedia, analisis agen dibatasi 12 chunk terpilih dari bagian utama dan sampel merata, dan metadata offline belum diverifikasi eksternal**. Exact vector search belum memakai HNSW. Laporan saat menunggu approval merupakan draf dengan status tercantum.
 
 ## 11. Checklist penyelesaian
 

@@ -78,6 +78,8 @@ Pada 11 Oktober 2026, test gateway nyata lulus **1 test / 7 assertion**. Model e
 
 ## Hasil terakhir
 
-Suite SQLite terbaru lulus **106 test: 104 lulus, 2 dilewati, 538 assertion**; dua skip merupakan gateway nyata opsional dan pemeriksaan khusus PostgreSQL. Pint/PHPStan lulus; build berhasil. Suite PostgreSQL terbaru lulus **106 test: 105 lulus, 1 dilewati, 543 assertion**. CI remote belum dikonfirmasi.
+Pada 14 Oktober 2026, suite SQLite lulus **128 test: 126 lulus, 2 dilewati, 648 assertion**; dua skip merupakan gateway nyata opsional dan pemeriksaan khusus PostgreSQL. Suite PostgreSQL lulus **128 test: 127 lulus, 1 dilewati, 653 assertion**. Pint dan PHPStan lulus. CI menjalankan build, pemeriksaan gaya, analisis statis, dan suite PostgreSQL pada setiap push ke main; hasil tiap commit tersedia di GitHub Actions.
 
-Bukti demo akademik 9 Oktober ada di [demo](demo.md) dan merupakan run historis sebelum seluruh AI dipindahkan ke gateway. Mutu atribusi temuan tidak dapat dinyatakan lulus hanya berdasarkan test perangkat lunak. OCR belum tersedia; AnalysisAgent hanya membaca 12 chunk awal per artikel. Chat memakai retrieval seluruh indeks yang cocok model/dimensi.
+Regresi baru mencakup hasil terpisah per run, riwayat analisis artikel yang sama, pemulihan checkpoint historis tanpa menebak run, rollback yang menjaga riwayat, pembatalan saat inferensi, sumber chat yang berubah, larangan perubahan saat workflow aktif, batas koleksi OpenAlex, pemilihan cuplikan dari bagian akhir, dan retry embedding yang memakai ulang batch berhasil. Checkpoint embedding memakai cache aplikasi selama 24 jam, kemudian dibersihkan setelah indeks berhasil diganti; gunakan cache database/file yang persisten untuk mempertahankannya antar-worker.
+
+Bukti demo akademik 9 Oktober ada di [demo](demo.md) dan merupakan run historis sebelum seluruh AI dipindahkan ke gateway. Mutu atribusi temuan tidak dapat dinyatakan lulus hanya berdasarkan test perangkat lunak. OCR belum tersedia; AnalysisAgent membaca maksimal 12 chunk terpilih dari bagian utama dan sampel merata per artikel. Chat memakai retrieval seluruh indeks yang cocok model/dimensi.
