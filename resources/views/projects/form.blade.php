@@ -5,6 +5,7 @@
         @foreach (['title' => 'Judul riset', 'topic' => 'Topik penelitian', 'discipline' => 'Disiplin ilmu', 'keywords' => 'Kata kunci'] as $field => $label)
             <div class="{{ $field === 'title' ? 'sm:col-span-2' : '' }}"><label for="{{ $field }}" class="rm-label">{{ $label }} {{ in_array($field, ['title', 'topic']) ? '*' : '' }}</label><input id="{{ $field }}" name="{{ $field }}" value="{{ old($field, $editing ? $project->$field : '') }}" class="rm-input" @if(in_array($field, ['title','topic'])) required @endif maxlength="{{ $field === 'keywords' ? 2000 : 255 }}">@error($field)<p class="rm-error">{{ $message }}</p>@enderror</div>
         @endforeach
+        <p class="text-sm text-muted sm:col-span-2">Topik, pertanyaan penelitian, dan kata kunci membantu menyesuaikan pencarian bukti serta urutan artikel dalam proyek ini.</p>
         @foreach (['research_question' => 'Pertanyaan penelitian', 'description' => 'Deskripsi', 'objectives' => 'Tujuan penelitian'] as $field => $label)
             <div class="sm:col-span-2"><label for="{{ $field }}" class="rm-label">{{ $label }} {{ $field === 'research_question' ? '*' : '' }}</label><textarea id="{{ $field }}" name="{{ $field }}" rows="{{ $field === 'research_question' ? 3 : 4 }}" class="rm-input" maxlength="10000" @if($field === 'research_question') required @endif>{{ old($field, $editing ? $project->$field : '') }}</textarea>@error($field)<p class="rm-error">{{ $message }}</p>@enderror</div>
         @endforeach

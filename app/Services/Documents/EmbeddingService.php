@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Documents;
 
+use App\Jobs\PruneVectorChunks;
 use App\Models\Document;
 use App\Models\PaperChunk;
 use App\Models\ResearchProject;
@@ -15,7 +16,7 @@ use RuntimeException;
 
 class EmbeddingService
 {
-    public function __construct(private PdfParserService $parser, private DocumentChunkerService $chunker, private SenopatiService $ai, private EvidenceInvalidationService $evidenceInvalidation) {}
+    public function __construct(private PdfParserService $parser, private DocumentChunkerService $chunker, private SenopatiService $ai, private EvidenceInvalidationService $evidenceInvalidation, private QdrantService $qdrant) {}
 
     public function process(Document $document, bool $forceReindex = false): void
     {
@@ -73,6 +74,12 @@ class EmbeddingService
             if ($locked === null) {
                 throw new RuntimeException('Dokumen dihapus sebelum proses indeks selesai.');
             }
+            $oldChunks = [];
+            foreach ($locked->chunks()->get(['id', 'embedding_model', 'embedding_dimensions']) as $oldChunk) {
+                if ($oldChunk->embedding_model !== null && $oldChunk->embedding_dimensions !== null) {
+                    $oldChunks[] = ['id' => $oldChunk->id, 'embedding_model' => $oldChunk->embedding_model, 'embedding_dimensions' => $oldChunk->embedding_dimensions];
+                }
+            }
             if ($locked->chunks()->exists()) {
                 $this->evidenceInvalidation->invalidate($locked);
             }
@@ -83,7 +90,12 @@ class EmbeddingService
                     'embedding_model' => $model, 'embedding_dimensions' => $dimensions,
                 ]);
             }
+            // A failed Qdrant write rolls back chunk and citation changes together.
+            $this->qdrant->upsertChunks($locked->chunks()->get());
             $locked->update(['extraction_status' => 'indexed', 'page_count' => max(array_column($pages, 'page_number')), 'error_message' => null]);
+            if ($oldChunks !== []) {
+                PruneVectorChunks::dispatch($oldChunks)->afterCommit();
+            }
         });
         foreach ($checkpointKeys as $key) {
             Cache::forget($key);

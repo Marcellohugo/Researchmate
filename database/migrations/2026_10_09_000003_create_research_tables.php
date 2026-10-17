@@ -2,7 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -85,10 +84,6 @@ return new class extends Migration
             $table->timestamps();
             $table->unique(['document_id', 'chunk_index']);
         });
-
-        if (DB::getDriverName() === 'pgsql' && DB::selectOne("SELECT 1 FROM pg_extension WHERE extname = 'vector'") !== null) {
-            DB::statement('ALTER TABLE paper_chunks ALTER COLUMN embedding TYPE vector USING embedding::vector');
-        }
 
         Schema::create('research_runs', function (Blueprint $table) {
             $table->id();

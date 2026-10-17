@@ -29,7 +29,7 @@ class ToolRegistry
             'search_openalex' => ['description' => 'Cari metadata artikel nyata di OpenAlex, khusus mode daring.', 'rules' => ['query' => 'required|string|max:500'], 'properties' => ['query' => ['type' => 'string']]],
             'get_paper_metadata' => ['description' => 'Periksa DOI melalui Crossref, khusus mode daring.', 'rules' => ['doi' => 'required|string|max:255'], 'properties' => ['doi' => ['type' => 'string']]],
             'normalize_doi' => ['description' => 'Normalisasi DOI tanpa akses internet.', 'rules' => ['doi' => 'required|string|max:255'], 'properties' => ['doi' => ['type' => 'string']]],
-            'search_project_documents' => ['description' => 'Daftar artikel dan dokumen lokal hanya dari proyek ini.', 'rules' => ['query' => 'required|string|max:500'], 'properties' => ['query' => ['type' => 'string']]],
+            'search_project_documents' => ['description' => 'Urutkan artikel proyek menurut kecocokan isi dengan topik dan query. Skor kosong berarti dokumen belum mempunyai embedding yang sesuai.', 'rules' => ['query' => 'required|string|max:500'], 'properties' => ['query' => ['type' => 'string']]],
             'retrieve_document_chunks' => ['description' => 'Cari bagian dokumen proyek untuk mendukung analisis.', 'rules' => ['query' => 'required|string|max:1000'], 'properties' => ['query' => ['type' => 'string']]],
             'get_literature_matrix' => ['description' => 'Ambil analisis artikel terpilih yang sudah disimpan.', 'rules' => [], 'properties' => []],
             'verify_claim_evidence' => ['description' => 'Periksa kutipan dan kepemilikan sumber bukti.', 'rules' => ['references' => 'present|array|max:30'] + $this->referenceRules('references'), 'properties' => ['references' => $this->referenceSchema()]],
@@ -106,7 +106,7 @@ class ToolRegistry
                 'search_openalex' => $this->search($context, (string) $arguments['query']),
                 'get_paper_metadata' => ['metadata' => $this->crossref->metadata((string) $arguments['doi'])],
                 'normalize_doi' => ['doi' => OpenAlexService::normalizeDoi((string) $arguments['doi'])],
-                'search_project_documents' => ['papers' => $context->project->papers()->whereHas('documents', fn ($query) => $query->where('project_id', $context->project->id))->limit((int) config('ai.max_papers', 20))->get()->map(fn ($paper) => $this->metadata->apply($paper, $context->project)->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi']))->all()],
+                'search_project_documents' => $this->searchProjectDocuments($context->project, (string) $arguments['query']),
                 'retrieve_document_chunks' => ['chunks' => $this->retrieval->retrieve($context->project, (string) $arguments['query'])],
                 'get_literature_matrix' => ['analyses' => PaperAnalysis::query()->where('project_id', $context->project->id)->where('run_id', $context->run->id)->get()->toArray()],
                 'verify_claim_evidence' => $this->verifyEvidence($context, $arguments['references']),
@@ -132,6 +132,27 @@ class ToolRegistry
             $step->update(['status' => 'failed', 'error_message' => mb_substr($exception->getMessage(), 0, 2000), 'completed_at' => now(), 'duration_ms' => (int) ((microtime(true) - $started) * 1000)]);
             throw $exception;
         }
+    }
+
+    /** @return array{papers: list<array<string, mixed>>} */
+    private function searchProjectDocuments(ResearchProject $project, string $query): array
+    {
+        $scores = [];
+        if (PaperChunk::query()->whereNotNull('embedding')->where('embedding_model', (string) config('ai.embed_model'))
+            ->whereHas('document', fn ($q) => $q->where('project_id', $project->id)->where('extraction_status', 'indexed'))->exists()) {
+            foreach ($this->retrieval->retrieve($project, $query) as $chunk) {
+                if ($chunk['paper_id'] !== null) {
+                    $scores[$chunk['paper_id']] = max($scores[$chunk['paper_id']] ?? -1.0, $chunk['score']);
+                }
+            }
+        }
+        $papers = $project->papers()->whereHas('documents', fn ($q) => $q->where('project_id', $project->id))
+            ->limit((int) config('ai.max_papers', 20))->get()
+            ->map(fn ($paper) => $this->metadata->apply($paper, $project)->only(['id', 'title', 'abstract', 'authors', 'publication_year', 'doi'])
+                + ['topic_similarity' => $scores[$paper->id] ?? null])
+            ->sortByDesc(fn (array $paper): float => (float) ($paper['topic_similarity'] ?? -2.0))->all();
+
+        return ['papers' => array_values($papers)];
     }
 
     /** @return array<string, mixed> */

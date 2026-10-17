@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\AnswerResearchQuestion;
 use App\Jobs\ProcessDocument;
+use App\Jobs\PruneVectorChunks;
 use App\Models\Document;
 use App\Models\Paper;
 use App\Models\PaperChunk;
@@ -24,6 +25,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Tests\Support\GatewayFixture;
 use Tests\Support\PdfFixture;
+use Tests\Support\QdrantFixture;
 use Tests\TestCase;
 
 class DocumentRagTest extends TestCase
@@ -36,6 +38,7 @@ class DocumentRagTest extends TestCase
         Storage::fake('local');
         Queue::fake();
         Http::preventStrayRequests();
+        QdrantFixture::fake();
     }
 
     public function test_upload_is_private_queued_deduplicated_and_metadata_is_honest(): void
@@ -102,7 +105,7 @@ class DocumentRagTest extends TestCase
     {
         $project = ResearchProject::factory()->create();
         $document = $this->document($project, 'indexed');
-        $this->chunk($document, [1, 0, 0]);
+        $validChunk = $this->chunk($document, [1, 0, 0]);
         $wrong = $this->document(ResearchProject::factory()->create(), 'indexed');
         $this->chunk($wrong, [1, 0, 0]);
         $pending = $this->document($project, 'queued');
@@ -113,6 +116,81 @@ class DocumentRagTest extends TestCase
         $this->assertCount(1, $results);
         $this->assertSame($document->id, $results[0]['document_id']);
         $this->assertSame(1.0, $results[0]['score']);
+        Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/points/query')
+            && $request['filter']['must'][0]['match']['value'] === $project->id
+            && $request['filter']['must'][1]['match']['value'] === config('ai.embed_model')
+            && $request['filter']['must'][2]['match']['value'] === 3
+            && $request['filter']['must'][3]['has_id'] === [$validChunk->id]);
+    }
+
+    public function test_qdrant_failure_rolls_back_reindex_and_preserves_chunk_and_citations(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $document = $this->document($project, 'indexed');
+        $oldChunk = $this->chunk($document, [1, 0, 0]);
+        $message = $project->messages()->create(['role' => 'assistant', 'content' => 'Jawaban lama.', 'status' => 'completed', 'evidence_status' => 'supported', 'source_references' => [['document_id' => $document->id, 'chunk_id' => $oldChunk->id]]]);
+        Http::swap(new Factory);
+        Http::preventStrayRequests();
+        Http::fake(['http://qdrant.test:6333/*/points?wait=true' => Http::response([], 503)]);
+        QdrantFixture::fake();
+        Http::fake([SenopatiService::EMBEDDINGS_ENDPOINT => Http::response(GatewayFixture::embeddings([[1, 0, 0]]))]);
+
+        try {
+            app(EmbeddingService::class)->process($document);
+            $this->fail('Qdrant gagal harus mempertahankan indeks lama.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('Qdrant mengembalikan HTTP 503', $exception->getMessage());
+            $this->assertSame([$oldChunk->id], $document->chunks()->pluck('id')->all());
+            $this->assertSame('supported', $message->fresh()->evidence_status);
+            $this->assertSame('indexed', $document->fresh()->extraction_status);
+            Queue::assertNotPushed(PruneVectorChunks::class);
+        }
+    }
+
+    public function test_retrieval_rechecks_database_scope_even_if_qdrant_returns_foreign_points(): void
+    {
+        $project = ResearchProject::factory()->create();
+        $valid = $this->chunk($this->document($project, 'indexed'), [1, 0, 0]);
+        $foreign = $this->chunk($this->document(ResearchProject::factory()->create(), 'indexed'), [1, 0, 0]);
+        Http::swap(new Factory);
+        Http::preventStrayRequests();
+        Http::fake(['http://qdrant.test:6333/*/points/query' => Http::response(['status' => 'ok', 'result' => ['points' => [
+            ['id' => $foreign->id, 'score' => 1.0], ['id' => $valid->id, 'score' => 0.8],
+        ]]])]);
+
+        $results = app(VectorSearchService::class)->search($project, [1.0, 0.0, 0.0]);
+
+        $this->assertSame([$valid->id], array_column($results, 'chunk_id'));
+        $this->assertSame(0.8, $results[0]['score']);
+    }
+
+    public function test_retrieval_uses_current_topic_question_and_keywords_while_preserving_project_scope(): void
+    {
+        $project = ResearchProject::factory()->create(['topic' => 'Energi surya', 'research_question' => 'Bagaimana efisiensi panel?', 'keywords' => 'fotovoltaik, efisiensi']);
+        $chunk = $this->chunk($this->document($project, 'indexed'), [1, 0, 0]);
+        $this->chunk($this->document(ResearchProject::factory()->create(), 'indexed'), [1, 0, 0]);
+        $inputs = [];
+        Http::fake([SenopatiService::EMBEDDINGS_ENDPOINT => function (Request $request) use (&$inputs) {
+            $inputs[] = $request['input'][0];
+
+            return Http::response(GatewayFixture::embeddings([[1, 0, 0]]));
+        }]);
+
+        $first = app(RetrievalService::class)->retrieve($project, 'Apa temuan utamanya?');
+        $project->update(['topic' => 'Penyimpanan energi', 'research_question' => 'Bagaimana umur baterai?', 'keywords' => 'baterai, degradasi']);
+        $second = app(RetrievalService::class)->retrieve($project, str_repeat('A', 10000));
+
+        $this->assertStringContainsString('Energi surya', $inputs[0]);
+        $this->assertStringContainsString('Bagaimana efisiensi panel?', $inputs[0]);
+        $this->assertStringContainsString('fotovoltaik, efisiensi', $inputs[0]);
+        $this->assertStringContainsString('Apa temuan utamanya?', $inputs[0]);
+        $this->assertStringContainsString('Penyimpanan energi', $inputs[1]);
+        $this->assertStringContainsString('Bagaimana umur baterai?', $inputs[1]);
+        $this->assertStringContainsString('baterai, degradasi', $inputs[1]);
+        $this->assertStringNotContainsString('Energi surya', $inputs[1]);
+        $this->assertLessThanOrEqual(6000, mb_strlen($inputs[1]));
+        $this->assertSame([$chunk->id], array_column($first, 'chunk_id'));
+        $this->assertSame([$chunk->id], array_column($second, 'chunk_id'));
     }
 
     public function test_chat_without_documents_marks_insufficient_evidence_without_calling_ai(): void

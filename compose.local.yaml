@@ -1,0 +1,5 @@
+# Optional access from a Laravel process running directly on this computer.
+services:
+  qdrant:
+    ports:
+      - "127.0.0.1:6333:6333"

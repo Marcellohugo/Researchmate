@@ -18,6 +18,11 @@ class RetrievalService
             return [];
         }
 
-        return $this->search->search($project, $this->ai->generateEmbedding($question), (int) config('ai.retrieval_limit', 5));
+        $input = 'Topik riset: '.mb_substr($project->topic, 0, 255)
+            ."\nPertanyaan riset: ".mb_substr($project->research_question, 0, 1000)
+            ."\nKata kunci: ".mb_substr($project->keywords ?? '', 0, 500)
+            ."\nPertanyaan pengguna: ".mb_substr($question, 0, 4000);
+
+        return $this->search->search($project, $this->ai->generateEmbedding(mb_substr($input, 0, 6000)), (int) config('ai.retrieval_limit', 5));
     }
 }

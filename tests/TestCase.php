@@ -2,11 +2,26 @@
 
 namespace Tests;
 
+use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 use Laravel\Fortify\Features;
+use RuntimeException;
 
 abstract class TestCase extends BaseTestCase
 {
+    public function createApplication(): Application
+    {
+        $app = parent::createApplication();
+        $connection = (string) config('database.default');
+        $database = (string) config('database.connections.'.$connection.'.database');
+        if ($connection !== 'pgsql' || preg_match('/_(test|testing)$/', $database) !== 1
+            || config('database.connections.'.$connection.'.url')) {
+            throw new RuntimeException('Test hanya boleh memakai PostgreSQL dengan nama database berakhiran _test atau _testing dan DB_URL kosong.');
+        }
+
+        return $app;
+    }
+
     protected function setUp(): void
     {
         parent::setUp();

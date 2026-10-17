@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Console\Commands;
 
+use App\Models\PaperChunk;
 use App\Services\AI\SenopatiService;
+use App\Services\Documents\QdrantService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -13,9 +15,9 @@ class SetupVectorCommand extends Command
 {
     protected $signature = 'ai:setup-vector';
 
-    protected $description = 'Validasi embedding nyata dan siapkan kolom pgvector tanpa menghapus indeks lama.';
+    protected $description = 'Siapkan Qdrant dan sinkronkan embedding tersimpan tanpa menghapus data PostgreSQL.';
 
-    public function handle(SenopatiService $ai): int
+    public function handle(SenopatiService $ai, QdrantService $qdrant): int
     {
         try {
             if (DB::connection()->getDriverName() !== 'pgsql') {
@@ -23,22 +25,15 @@ class SetupVectorCommand extends Command
 
                 return self::FAILURE;
             }
-            if (DB::selectOne("SELECT 1 FROM pg_extension WHERE extname = 'vector'") === null) {
-                $this->error('Pasang pgvector lalu jalankan CREATE EXTENSION vector sebagai administrator pada database ini.');
-
-                return self::FAILURE;
-            }
             $dimensions = count($ai->generateEmbedding('Validasi dimensi embedding ResearchMate.'));
-            $column = DB::selectOne("SELECT format_type(a.atttypid,a.atttypmod) AS type FROM pg_attribute a JOIN pg_class c ON a.attrelid=c.oid JOIN pg_namespace n ON c.relnamespace=n.oid WHERE c.relname='paper_chunks' AND n.nspname=current_schema() AND a.attname='embedding'");
-            $type = $column->type ?? '';
-            if ($type === 'text' || str_starts_with($type, 'vector(')) {
-                DB::transaction(fn () => DB::statement('ALTER TABLE paper_chunks ALTER COLUMN embedding TYPE vector USING embedding::vector'));
-            } elseif ($type !== 'vector') {
-                $this->error('Kolom embedding tidak ditemukan atau memiliki tipe yang tidak didukung. Jalankan migrasi terlebih dahulu.');
-
-                return self::FAILURE;
-            }
-            $this->info('Kolom vector siap. Dimensi model terdeteksi: '.$dimensions.'. Indeks disaring menurut model dan dimensi.');
+            $qdrant->ensureCollection((string) config('ai.embed_model'), $dimensions);
+            $count = 0;
+            PaperChunk::query()->with('document')->whereNotNull('embedding')->whereNotNull('embedding_model')->whereNotNull('embedding_dimensions')
+                ->chunkById(100, function ($chunks) use ($qdrant, &$count): void {
+                    $qdrant->upsertChunks($chunks);
+                    $count += $chunks->count();
+                });
+            $this->info('Qdrant siap. Dimensi model terdeteksi: '.$dimensions.'. '.$count.' potongan teks disinkronkan dari PostgreSQL.');
             $this->line('Jika model berubah, jalankan ai:reindex {project} --force. Indeks lama dipertahankan sampai pengganti berhasil.');
 
             return self::SUCCESS;

@@ -2,11 +2,11 @@
 
 ## Lingkungan
 
-Suite standar memakai SQLite :memory:, HTTP mock, token fixture, cache/session array, dan queue sync. Tidak memakai AI lokal atau menghubungi gateway nyata. Suite PostgreSQL memakai database khusus **researchmate_testing** karena RefreshDatabase mengubah tabel. Jangan memakai database researchmate milik pengguna sebagai target test.
+Suite standar memakai PostgreSQL pada database khusus **researchmate_testing**, HTTP mock, token fixture, cache/session array, dan queue sync. Test menolak database yang tidak berakhiran `_test` atau `_testing` serta DB_URL yang terisi sebelum menjalankan migrasi test. Jangan memakai database pengguna sebagai target pengujian.
 
-Mock menguji kontrak API, validasi, kepemilikan, transisi, bounded retry, kegagalan, dan sumber. PostgreSQL menguji FK/JSONB/vector cosine sebenarnya. Test gateway nyata opsional menguji layanan Senopati, model chat/embedding, vektor finite, dan JSON schema. Hasil akademik tetap perlu tinjauan manusia.
+Mock menguji kontrak REST Qdrant dan Senopati, validasi vektor, filter proyek/model/dimensi, rollback indeks, serta retry pembersihan. PostgreSQL menguji FK, JSONB, dan transaksi sebenarnya. Mock tidak membuktikan server Qdrant atau gateway nyata tersedia. Integrasi nyata dijalankan terpisah.
 
-Ekspor Word/PDF menggunakan PHPWord dan Dompdf dengan ekstensi PHP gd, zip, mbstring, serta dom. Test renderer memeriksa isi DOCX/XML dan teks PDF, tanpa menghubungi Senopati. Pemeriksaan struktur dan teks bukan pengganti pemeriksaan tata letak visual.
+Ekspor Word/PDF memakai PHPWord dan Dompdf. Test renderer memeriksa isi DOCX/XML dan teks PDF. Pemeriksaan struktur bukan pengganti pemeriksaan visual.
 
 ## Perintah standar
 
@@ -29,11 +29,10 @@ php vendor/bin/phpunit tests/Feature/ReportDocumentRendererTest.php tests/Featur
 
 ## PostgreSQL khusus
 
-Administrator membuat database khusus milik role aplikasi dan mengaktifkan extension vector. Contoh runtime portabel, sesuaikan port/admin:
+Administrator membuat database khusus milik role aplikasi. Extension vektor tidak diperlukan. Contoh runtime portabel, sesuaikan port/admin:
 
 ```powershell
 createdb -h 127.0.0.1 -p 54329 -U postgres -O researchmate researchmate_testing
-psql -h 127.0.0.1 -p 54329 -U postgres -d researchmate_testing -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 ```
 
 Gunakan terminal test terpisah agar override tidak memengaruhi aplikasi:
@@ -54,7 +53,7 @@ Remove-Item Env:DB_PASSWORD
 # Tutup terminal test setelah selesai.
 ```
 
-Extension aktif sebelum migrasi. Retrieval memfilter proyek, model, dimensi, dan status dokumen; cosine PHP hanya dipakai untuk SQLite saat testing.
+Retrieval Qdrant memfilter proyek, model, dimensi, dan ID chunk aktif. PostgreSQL memeriksa kembali sumber dan status dokumen. Tidak ada backend pencarian khusus untuk test.
 
 ## Gateway nyata
 
@@ -86,7 +85,15 @@ Pada 11 Oktober 2026, test gateway nyata lulus **1 test / 7 assertion**. Model e
 
 ## Hasil terakhir
 
-CI menjalankan build, pemeriksaan gaya, analisis statis, dan suite PostgreSQL pada setiap push ke main; hasil tiap commit tersedia di GitHub Actions. Suite standar melewati test gateway nyata opsional, sedangkan suite SQLite juga melewati pemeriksaan khusus PostgreSQL. Jalankan keduanya untuk memeriksa perilaku basis data yang sesuai lingkungan produksi.
+Pada 17 Oktober 2026, suite PostgreSQL lulus **176 test**, dengan **1 test gateway opsional dilewati**, dari **177 test** dan **1.035 assertions**. Composer validate --strict, Pint, PHPStan level 7, dan build Vite berhasil. Cakupan tambahan meliputi kontrak Qdrant, penulisan indeks gagal, input topik yang berubah, pengurutan artikel sesuai hasil retrieval, serta antrean pembersihan dokumen/proyek/akun.
+
+Suite yang sama juga lulus dalam image Docker PHP 8.3.35 dengan PostgreSQL terpisah: 176 lulus, 1 dilewati, 1.035 assertions, tanpa warning. Pint dan PHPStan lulus dalam image pengujian. Image produksi tidak memuat `.env` atau `.env.docker`, dan tidak menerima kata sandi administrator PostgreSQL.
+
+Pemeriksaan layanan nyata pada Docker berhasil: aplikasi dan PostgreSQL/Qdrant sehat, worker berjalan, `ai:setup-vector` menyinkronkan 348 embedding tersimpan, dan `ai:check` mendeteksi embedding Senopati 768 dimensi. Pencarian vektor yang sama mengembalikan sumber terdekat dengan skor sekitar 1. Pencarian dengan topik serta pertanyaan riset mengembalikan enam sumber yang tetap berada dalam proyeknya.
+
+Pemindahan data memverifikasi jumlah tetap 2 akun, 3 proyek, 15 dokumen, 348 chunk, 2 run, dan 1 laporan. Seluruh 15 PDF cocok dengan hash aslinya dan laporan tersedia dalam storage Docker. Backup sebelum dan setelah perubahan tipe embedding tersimpan privat di direktori backup runtime. Pemeriksaan ini membuktikan integrasi dan pelestarian data, bukan akurasi akademik atau mutu ranking untuk seluruh topik.
+
+CI menjalankan build, pemeriksaan gaya, analisis statis, dan suite PostgreSQL pada setiap push ke main; hasil tiap commit tersedia di GitHub Actions. Suite standar melewati test gateway nyata opsional. Semua test database memakai PostgreSQL. Docker menyediakan profile test dengan database terpisah sesuai README.
 
 Regresi mencakup hasil terpisah per run, riwayat analisis artikel yang sama, pemulihan checkpoint historis tanpa menebak run, rollback yang menjaga riwayat, pembatalan saat inferensi, sumber chat yang berubah, larangan perubahan saat workflow aktif, batas koleksi OpenAlex, dan retry embedding yang memakai ulang batch berhasil. Checkpoint embedding memakai cache aplikasi selama 24 jam, kemudian dibersihkan setelah indeks berhasil diganti; gunakan cache database/file yang persisten untuk mempertahankannya antar-worker.
 

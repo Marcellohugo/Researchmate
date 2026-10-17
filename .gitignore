@@ -10,6 +10,7 @@
 .env
 .env.backup
 .env.production
+.env.docker
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
@@ -35,5 +36,9 @@ yarn-error.log
 /AGENTS.md
 /CLAUDE.md
 /boost.json
+/output/*
+!/output/presentasi-researchmate/
+/output/presentasi-researchmate/*
+!/output/presentasi-researchmate/ResearchMate_AI_Kelompok_11_Qdrant_Docker_Final.pptx
 /opencode.json
 /opencode.jsonc

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Jobs\ProcessDocument;
+use App\Jobs\PruneVectorIndex;
 use App\Models\Document;
 use App\Models\Paper;
 use App\Models\ResearchProject;
@@ -99,10 +100,11 @@ class DocumentController extends Controller
             $lockedDocument = Document::query()->lockForUpdate()->where('project_id', $project->id)->findOrFail($document->id);
             $evidenceInvalidation->invalidate($lockedDocument);
             $lockedDocument->delete();
+            PruneVectorIndex::dispatch($project->id, $document->id)->afterCommit();
             DB::afterCommit(fn () => Storage::disk('local')->delete($path));
         });
 
-        return to_route('projects.documents.index', $project)->with('status', 'PDF dan indeks teks dihapus dari proyek. Metadata artikel tetap tersimpan.');
+        return to_route('projects.documents.index', $project)->with('status', 'PDF dan indeks teks dihapus dari proyek. Pembersihan vektor masuk antrean. Metadata artikel tetap tersimpan.');
     }
 
     public function reindex(ResearchProject $project, Document $document): RedirectResponse

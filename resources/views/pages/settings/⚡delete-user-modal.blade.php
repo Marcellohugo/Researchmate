@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\PasswordValidationRules;
+use App\Jobs\PruneVectorIndex;
 use App\Livewire\Actions\Logout;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -24,11 +25,14 @@ new class extends Component {
         $user = Auth::user();
         abort_unless($user instanceof \App\Models\User, 401);
         DB::transaction(function () use ($user, $logout): void {
-            $projectIds = $user->projects()->select('id');
-            $paths = \App\Models\Document::query()->whereIn('project_id', clone $projectIds)->pluck('storage_path')
+            $projectIds = $user->projects()->pluck('id')->all();
+            $paths = \App\Models\Document::query()->whereIn('project_id', $projectIds)->pluck('storage_path')
                 ->merge(\App\Models\ResearchArtifact::query()->whereIn('project_id', $projectIds)->pluck('storage_path'))->all();
             $logout();
             $user->delete();
+            foreach ($projectIds as $projectId) {
+                PruneVectorIndex::dispatch((int) $projectId)->afterCommit();
+            }
             DB::afterCommit(fn () => Storage::disk('local')->delete($paths));
         });
 

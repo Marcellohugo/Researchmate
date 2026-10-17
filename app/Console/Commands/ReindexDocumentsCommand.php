@@ -7,6 +7,7 @@ namespace App\Console\Commands;
 use App\Jobs\ProcessDocument;
 use App\Models\ResearchProject;
 use App\Services\AI\SenopatiService;
+use App\Services\Documents\QdrantService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -17,7 +18,7 @@ class ReindexDocumentsCommand extends Command
 
     protected $description = 'Antrekan indeks ulang PDF setelah pergantian model atau dimensi embedding.';
 
-    public function handle(SenopatiService $ai): int
+    public function handle(SenopatiService $ai, QdrantService $qdrant): int
     {
         if (! $this->option('force')) {
             $this->error('Gunakan --force untuk menyetujui indeks ulang. PDF asli tetap dipertahankan.');
@@ -42,6 +43,7 @@ class ReindexDocumentsCommand extends Command
         }
         try {
             $embedding = $ai->generateEmbedding('Validasi model sebelum indeks ulang.');
+            $qdrant->ensureCollection((string) config('ai.embed_model'), count($embedding));
             $ids = DB::transaction(function () use ($project) {
                 $locked = ResearchProject::query()->whereKey($project->id)->lockForUpdate()->firstOrFail();
                 if ($locked->runs()->whereNotIn('status', ['completed', 'cancelled'])->exists()

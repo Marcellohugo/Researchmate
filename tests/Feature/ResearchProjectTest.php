@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\PruneVectorIndex;
 use App\Models\Paper;
 use App\Models\ResearchProject;
 use App\Models\ResearchRun;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -165,6 +167,7 @@ class ResearchProjectTest extends TestCase
     public function test_project_deletion_cascades_data_and_private_files_but_preserves_global_papers(): void
     {
         Storage::fake('local');
+        Queue::fake([PruneVectorIndex::class]);
         $project = ResearchProject::factory()->create();
         $paper = Paper::create(['title' => 'Dokumen contoh']);
         $project->papers()->attach($paper->id);
@@ -194,6 +197,7 @@ class ResearchProjectTest extends TestCase
         $this->assertModelExists($paper);
         Storage::disk('local')->assertMissing($document->storage_path);
         Storage::disk('local')->assertMissing($artifact->storage_path);
+        Queue::assertPushed(PruneVectorIndex::class, fn ($job) => $job->projectId === $project->id && $job->documentId === null);
     }
 
     public function test_schema_supports_json_casts_and_normalized_doi(): void

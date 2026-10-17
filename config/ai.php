@@ -19,4 +19,8 @@ return [
     'academic_timeout' => (int) env('ACADEMIC_API_TIMEOUT', 15),
     'max_document_chunks' => (int) env('AI_MAX_DOCUMENT_CHUNKS', 1000),
     'max_output_tokens' => (int) env('AI_MAX_OUTPUT_TOKENS', 4096),
+    'qdrant_url' => env('QDRANT_URL', 'http://127.0.0.1:6333'),
+    'qdrant_api_key' => env('QDRANT_API_KEY'),
+    'qdrant_collection' => env('QDRANT_COLLECTION', 'researchmate'),
+    'qdrant_timeout' => (int) env('QDRANT_TIMEOUT', 15),
 ];

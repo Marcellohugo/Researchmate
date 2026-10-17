@@ -1,97 +1,43 @@
-# Fase 8 — Penyerahan dan Operasi Lokal
+# Operasi dan penyerahan ResearchMate
 
-## 1. Tujuan fase
+Runtime yang direkomendasikan memakai Docker Compose: aplikasi Laravel, worker antrean, PostgreSQL, dan Qdrant. Chat dan embedding tetap melalui Senopati ITS. Instalasi langsung tetap tersedia untuk pengembangan. [README](../README.md) memuat langkah instalasi dan diagram terkini.
 
-Menyerahkan kode runnable, migrasi, diagram, panduan instalasi, pengujian, operasi, batas implementasi, serta demo akademik yang memakai lima dokumen nyata.
+## Data dan kredensial
 
-## 2. Keputusan arsitektur
+Source dan lockfile berada di Git. Kredensial berada di `.env` yang diabaikan Git. PDF, laporan, database, serta volume Qdrant merupakan data privat. Jangan mengganti APP_KEY pada instalasi berisi data.
 
-Repositori menyimpan source dan lockfile. Runtime, kredensial, model, database, PDF, laporan, dan backup berada di luar Git atau storage privat yang diabaikan Git. Jalankan lokal melalui PHP, PostgreSQL/pgvector, gateway Senopati, dan worker database. Diagram arsitektur, ERD, workflow, dan sequence terdapat pada [README](../README.md).
+Compose memisahkan volume PostgreSQL, Qdrant, serta storage aplikasi yang dipakai bersama oleh web dan worker. Hanya port web loopback yang dipublikasikan secara default. PostgreSQL dan Qdrant berada di jaringan internal Compose.
 
-Untuk lingkungan bersama, gunakan web server PHP yang sesuai, HTTPS, `APP_DEBUG=false`, serta permission filesystem yang membatasi akun layanan. Server `artisan serve` digunakan untuk pengembangan/demo lokal. Tidak ada klaim deployment publik atau audit keamanan produksi yang belum dilakukan.
+## Pembaruan instalasi
 
-## 3. Perintah instalasi
+Cadangkan PostgreSQL dan storage privat sebelum migrasi. Pengindeksan lama tetap tersedia sebagai sumber rebuild dalam kolom embedding JSON. Migrasi tidak menghapus dokumen atau hasil riset. `ai:setup-vector` menyalin embedding tersimpan ke Qdrant tanpa melakukan embedding ulang seluruh PDF.
 
-Ikuti README untuk role/database/extension dan `.env`. Setelah prasyarat siap:
+Setelah memperbarui source/image, jalankan migrasi dan sinkronisasi indeks sesuai README, kemudian restart worker. Jangan memakai `migrate:fresh`, `docker compose down -v`, atau database pengguna untuk pengujian.
+
+## Backup dan pemulihan
+
+Simpan dump PostgreSQL dan salinan `storage/app/private` dari waktu yang sama. Pada Docker, lokasi ini berada dalam volume app_storage. Qdrant dapat dibangun ulang dari data embedding di PostgreSQL melalui `ai:setup-vector`; snapshot Qdrant dapat mempercepat pemulihan.
+
+Uji restore pada database dan volume baru sebelum memakai backup untuk pemulihan. Restore file saja tidak memulihkan metadata, akun, atau kutipan. Restore database saja tidak memulihkan PDF dan laporan.
+
+## Antrean dan kesehatan
 
 ```powershell
-composer install
-npm.cmd ci
-npm.cmd run build
-php artisan migrate
-php artisan ai:setup-vector
 php artisan ai:check
-composer test
+php artisan queue:failed
+php artisan queue:retry ID_JOB
 ```
 
-Jalankan server/worker sesuai README atau gunakan skrip Windows pada runtime yang sudah disiapkan:
+Worker memproses PDF, chat, agen, dan pembersihan titik vektor. Pekerjaan pembersihan dapat dicoba ulang setelah Qdrant pulih. Pencarian selalu memeriksa sumber aktif PostgreSQL sehingga titik sisa tidak membuka akses ke sumber yang sudah dihapus.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
-```
+## Pemeriksaan sebelum digunakan
 
-Skrip memulai layanan lokal yang tersedia, menjalankan migrasi, dan menyimpan log proses. Dependensi, aset, token Senopati, dan extension harus sudah siap. Skrip tidak memulai AI lokal; contoh PATH runtime ada di [README](../README.md#menjalankan-aplikasi). Tidak perlu Docker untuk runtime portabel Windows ini.
+Jalankan pemeriksaan Composer, analisis statis, suite PostgreSQL, serta build frontend sesuai [testing](testing.md). Integrasi nyata Senopati memakai token dan kuota. Hasil mock tidak membuktikan kualitas kesimpulan ilmiah.
 
-## 4. Berkas yang dibuat atau diubah
+Runtime Windows portabel yang sudah ada tetap memakai cluster dan port pada `.env`. Skrip `scripts/start-local.ps1` tidak membuat ulang cluster. Instalasi Docker baru memakai volume terpisah dan tidak otomatis memindahkan database atau PDF dari instalasi langsung.
 
-- [README](../README.md), [dokumen fase](.), [demo](demo.md), [testing](testing.md).
-- [Lock Composer](../composer.lock), [lock npm](../package-lock.json), [.env.example](../.env.example).
-- [Migrasi](../database/migrations), [test](../tests), [workflow CI](../.github/workflows/tests.yml), [PHPStan](../phpstan.neon).
-- [Perintah AI](../app/Console/Commands), [antrean](../config/queue.php), [storage](../config/filesystems.php).
-- [Skrip startup Windows](../scripts/start-local.ps1).
+## Batas aplikasi
 
-## 5. Kode sumber lengkap
+OCR belum tersedia. Analisis membaca seluruh teks yang terindeks dalam batas konfigurasi, tetapi detail tetap dapat terlewat saat peringkasan. Metadata dan APA/IEEE memerlukan tinjauan. Kandidat celah hanya berlaku pada koleksi proyek. Web server dan jaringan produksi memerlukan konfigurasi deployment sesuai lingkungan.
 
-Source aplikasi tersedia dalam [app](../app), [resources](../resources), [routes](../routes), [config](../config), dan [database](../database). Dokumen tiap fase menautkan berkas utama tanpa menggandakan kode yang dapat menjadi usang. Kode test dapat diperiksa untuk kontrak kegagalan dan keamanan.
-
-## 6. Perubahan konfigurasi
-
-Lingkungan implementasi memakai PG16 port `55433`, cluster `%LOCALAPPDATA%\ResearchMate\postgres16-data`; PG18 port `55432` tetap terpisah. Lokasi executable PG16: `%LOCALAPPDATA%\ResearchMate\runtime\postgresql16\pgsql\bin`. Chat dan embedding melalui gateway Senopati HTTPS. Jangan membagikan `.env`, credential DPAPI, log reset password, data cluster, atau PDF/laporan privat.
-
-Sebelum update, cadangkan database serta `storage/app/private`. Contoh backup memakai role aplikasi dan prompt password, tanpa password pada command:
-
-```powershell
-$rmBackup = Join-Path $env:LOCALAPPDATA 'ResearchMate\backups'
-New-Item -ItemType Directory -Force -Path $rmBackup | Out-Null
-$rmBackupFile = Join-Path $rmBackup ('researchmate-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.dump')
-pg_dump -h 127.0.0.1 -p 55433 -U researchmate -d researchmate -W -Fc -f "$rmBackupFile"
-```
-
-Periksa exit code dan simpan backup dengan izin privat. Restore harus diuji pada database baru yang terpisah; jangan menimpa data pengguna untuk latihan.
-
-## 7. Perubahan database
-
-Tidak ada tabel penyerahan tambahan. Migrasi lengkap menyiapkan auth/cache/queue serta seluruh skema riset. Extension aktif per database. Perubahan tipe embedding memakai `ai:setup-vector` setelah backup; perubahan model memerlukan indeks ulang tiap proyek. `.env.example` memakai port umum `5432`, bukan lokasi khusus komputer implementasi.
-
-## 8. Perintah pengujian
-
-```powershell
-composer validate --strict
-composer check-platform-reqs
-composer test
-npm.cmd run build
-php artisan ai:check
-```
-
-Jalankan suite PostgreSQL khusus dan grup Senopati mengikuti [testing.md](testing.md). Lakukan [demo](demo.md) sampai pemilihan sumber, tinjauan verifikasi, persetujuan manusia, dan unduhan laporan. CI dikonfigurasi, tetapi status eksekusi remote harus diperiksa terpisah.
-
-## 9. Hasil yang diharapkan
-
-Instalasi dapat menjalankan fitur auth sampai laporan lokal. Daftar verifikasi membedakan suite mock, operator vector nyata, chat/embedding nyata, serta demo penuh. Hasil bermasalah tetap mempunyai status yang jujur. Dokumen ini bukan bukti bahwa setiap run menghasilkan kesimpulan ilmiah benar.
-
-Pada 9 Oktober 2026, proyek/run 1 selesai setelah enam agen dan satu revisi. Dua jawaban RAG selesai; laporan 32.570 byte diunduh melalui GUI dan SHA-256 cocok dengan artifact privat. Persetujuan pukul 22:02 pada akun penguji merupakan uji alur aplikasi, bukan pengesahan kesimpulan ilmiah. [Demo](demo.md) memuat bukti dan [testing](testing.md) mencatat suite akhir: 95 test SQLite/PostgreSQL, Pint/PHPStan, serta build berhasil.
-
-## 10. Pemecahan masalah
-
-Runtime setelah reboot: mulai PG16, kemudian server/worker. Konfigurasi berubah: clear config dan restart worker. Disk penuh/permission gagal: periksa storage sebelum mengulang. **OCR belum tersedia, analisis agen dibatasi 12 chunk terpilih dari bagian utama dan sampel merata, dan metadata offline belum diverifikasi eksternal**. Exact vector search belum memakai HNSW. Laporan saat menunggu approval merupakan draf dengan status tercantum.
-
-## 11. Checklist penyelesaian
-
-- [x] Source, migrasi, lockfile, dan panduan setiap fase tersedia.
-- [x] Arsitektur, ERD, workflow, dan sequence didokumentasikan.
-- [x] Setup, reindex aman, operasi lokal, backup, dan test dijelaskan.
-- [x] PDF demo dan asal metadata nyata dicatat tanpa hasil rekaan.
-- [x] Bukti demo penuh, persetujuan uji fungsional, dua jawaban RAG, unduhan dengan hash cocok, dan screenshot akhir dicatat.
-- [x] Batas konteks, metadata offline, serta kebutuhan tinjauan makna kutipan dijelaskan.
-
-Pengguna tetap perlu menilai atribusi dan kesimpulan terhadap PDF asli sebelum memakai hasil akademik. Ini batas penggunaan keluaran model, bukan fase implementasi yang belum dikerjakan.
+[Demo historis](demo.md) menyimpan hasil run terdahulu. Hasil tersebut bukan pengukuran Qdrant atau Docker terbaru.

@@ -21,7 +21,7 @@ php artisan migrate
 php artisan migrate:status
 ```
 
-Aktifkan pgvector sebelum migrasi bila akan langsung memakai RAG. Tidak ada seeder hasil riset atau kebutuhan menjalankan `migrate:fresh`.
+Jalankan PostgreSQL dan Qdrant sesuai README sebelum memakai RAG. Tidak ada seeder hasil riset atau kebutuhan menjalankan `migrate:fresh`.
 
 ## 4. Berkas yang dibuat atau diubah
 
@@ -51,7 +51,7 @@ composer types:check
 composer lint:check
 ```
 
-Test mencakup CRUD, scope pengguna, proyek asing, validasi, pencarian, duplikasi, riwayat, serta penghapusan data proyek tanpa menghapus metadata global. SQLite terpisah dari data aplikasi; pengujian PostgreSQL memakai database khusus sesuai [panduan test](testing.md).
+Test mencakup CRUD, scope pengguna, proyek asing, validasi, pencarian, duplikasi, riwayat, serta penghapusan data proyek tanpa menghapus metadata global. Pengujian PostgreSQL memakai database khusus sesuai [panduan test](testing.md).
 
 ## 9. Hasil yang diharapkan
 

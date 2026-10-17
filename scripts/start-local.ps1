@@ -17,7 +17,7 @@ if ((Test-Path -LiteralPath (Join-Path $taskPgBin 'pg_ctl.exe')) -and (Test-Path
     if ($taskDbPort -notmatch '^\d{1,5}$' -or [int]$taskDbPort -lt 1 -or [int]$taskDbPort -gt 65535) { throw 'DB_PORT harus berisi port PostgreSQL yang valid.' }
     & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData status *> $null
     if ($LASTEXITCODE -ne 0) {
-        & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData -l (Join-Path $taskPgData 'server.log') -o "-h 127.0.0.1 -p $taskDbPort" -w start
+        & (Join-Path $taskPgBin 'pg_ctl.exe') -D $taskPgData -l (Join-Path $taskLogDir 'postgres.log') -o "-h 127.0.0.1 -p $taskDbPort" -w start
         if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL lokal tidak dapat dimulai. Periksa server.log.' }
     }
 }

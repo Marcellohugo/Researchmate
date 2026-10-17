@@ -2,10 +2,12 @@
 
 namespace Tests\Feature\Settings;
 
+use App\Jobs\PruneVectorIndex;
 use App\Models\Document;
 use App\Models\ResearchProject;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -124,11 +126,13 @@ class ProfileUpdateTest extends TestCase
         $this->assertNotNull($user->fresh());
     }
 
-    public function test_account_deletion_removes_only_its_private_project_files(): void
+    public function test_account_deletion_removes_only_its_private_files_and_queues_vector_cleanup(): void
     {
         Storage::fake('local');
+        Queue::fake();
         $user = User::factory()->create();
         $project = ResearchProject::factory()->for($user)->create();
+        $secondProject = ResearchProject::factory()->for($user)->create();
         $other = ResearchProject::factory()->create();
         foreach ([$project, $other] as $item) {
             $path = 'projects/'.$item->id.'/documents/test.pdf';
@@ -142,5 +146,9 @@ class ProfileUpdateTest extends TestCase
         Storage::disk('local')->assertExists('projects/'.$other->id.'/documents/test.pdf');
         $this->assertNull($user->fresh());
         $this->assertDatabaseHas('documents', ['project_id' => $other->id]);
+        foreach ([$project, $secondProject] as $deletedProject) {
+            Queue::assertPushed(PruneVectorIndex::class, fn ($job) => $job->projectId === $deletedProject->id && $job->documentId === null);
+        }
+        Queue::assertPushed(PruneVectorIndex::class, 2);
     }
 }

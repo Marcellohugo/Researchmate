@@ -1,6 +1,6 @@
 # Fase 1 — Fondasi Proyek
 
-**Catatan historis:** dokumen ini merekam kondisi setelah Fase 1. Fitur riset kini sudah diimplementasikan pada Fase 2–8, dan runtime aktif memakai PostgreSQL 16 pada port `55433`. Seluruh AI kini melalui gateway Senopati; konfigurasi AI lokal yang disebut dalam catatan historis ini sudah dihapus dari aplikasi. Gunakan [README terkini](../README.md) untuk instalasi, konfigurasi, serta pengujian; angka test dan status menu di bawah merupakan hasil Fase 1.
+**Catatan historis:** dokumen ini merekam kondisi setelah Fase 1. Fitur riset kini sudah diimplementasikan pada Fase 2–8, dan runtime kini memakai PostgreSQL dan Qdrant melalui Docker atau instalasi langsung sesuai README. Catatan teknologi dan angka di bawah adalah riwayat, bukan konfigurasi aktif. Seluruh AI kini melalui gateway Senopati; konfigurasi AI lokal yang disebut dalam catatan historis ini sudah dihapus dari aplikasi. Gunakan [README terkini](../README.md) untuk instalasi, konfigurasi, serta pengujian; angka test dan status menu di bawah merupakan hasil Fase 1.
 
 Dokumen ini mendeskripsikan implementasi pada `C:\Users\marco\Documents\Github\Researchmate`. Kode lengkap tersimpan langsung di repositori; tautan di bawah membuka berkas yang digunakan aplikasi. [README](C:/Users/marco/Documents/Github/Researchmate/README.md) memuat panduan penggunaan dan diagram sistem.
 

@@ -1,0 +1,115 @@
+name: researchmate
+
+x-app: &app
+  image: researchmate:local
+  build:
+    context: .
+    target: runtime
+  env_file: ${APP_ENV_FILE:-.env}
+  environment: &app-environment
+    APP_ENV: production
+    APP_DEBUG: "false"
+    APP_KEY: ${APP_KEY:?Set APP_KEY in .env before starting Docker}
+    LOG_CHANNEL: stderr
+    DB_CONNECTION: pgsql
+    DB_URL: ""
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_DATABASE: ${DB_DATABASE:-researchmate}
+    DB_USERNAME: ${DB_USERNAME:-researchmate}
+    DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    POSTGRES_PASSWORD: ""
+    QUEUE_CONNECTION: database
+    DB_QUEUE_RETRY_AFTER: 1860
+    QDRANT_URL: http://qdrant:6333
+    QDRANT_API_KEY: ${QDRANT_API_KEY:?Set QDRANT_API_KEY in .env}
+  volumes:
+    - app_storage:/var/www/html/storage
+  depends_on:
+    postgres:
+      condition: service_healthy
+    qdrant:
+      condition: service_healthy
+
+services:
+  app:
+    <<: *app
+    ports:
+      - "127.0.0.1:${APP_PORT:-8000}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *app
+    user: www-data
+    init: true
+    command: ["php", "artisan", "queue:work", "--tries=3", "--timeout=1800", "--sleep=1"]
+    restart: unless-stopped
+    stop_grace_period: 1850s
+
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-researchmate}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_USERNAME: ${DB_USERNAME:-researchmate}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/10-researchmate.sh:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?Set QDRANT_API_KEY in .env}
+      QDRANT__TELEMETRY_DISABLED: "true"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333; printf "GET /readyz HTTP/1.0\r\n\r\n" >&3; IFS= read -r response <&3; [[ "$$response" == *" 200 "* ]]'
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+  init:
+    <<: *app
+    profiles: [tools]
+    user: www-data
+    command: ["sh", "-c", "php artisan migrate --force && php artisan ai:setup-vector"]
+
+  tests:
+    <<: *app
+    profiles: [test]
+    image: researchmate:test
+    build:
+      context: .
+      target: test
+    user: www-data
+    environment:
+      <<: *app-environment
+      APP_ENV: testing
+      DB_DATABASE: researchmate_testing
+      SENOPATI_API_KEY: test-secret
+    volumes: []
+    command: ["composer", "ci:check"]
+
+volumes:
+  app_storage:
+  postgres_data:
+  qdrant_data:

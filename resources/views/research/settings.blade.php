@@ -23,7 +23,7 @@
                     <p class="text-sm text-muted">Belum diperiksa. Pastikan token tersedia dan periksa koneksi gateway.</p>
                 @endif
                 <p class="text-xs leading-6 text-muted">Untuk mengubah model, perbarui konfigurasi lingkungan dan bersihkan cache konfigurasi. Setelah mengganti model embedding, indeks ulang dokumen dengan perintah yang tersedia dalam panduan pemasangan. Embedding lama tidak dicampur dengan model baru.</p>
-                <p class="rounded-xl border border-line bg-canvas p-4 text-sm leading-6">Seluruh inferensi chat, agen, dan embedding melalui Senopati ITS dan memerlukan internet. Pertanyaan serta cuplikan teks PDF dikirim ke gateway; PDF dan vector hasilnya disimpan lokal. Mode dokumen lokal menonaktifkan OpenAlex/Crossref.</p>
+                <p class="rounded-xl border border-line bg-canvas p-4 text-sm leading-6">Seluruh inferensi chat, agen, dan embedding melalui Senopati ITS dan memerlukan internet. Pertanyaan serta cuplikan teks PDF dikirim ke gateway. PostgreSQL menyimpan data proyek, Qdrant mencari bukti sesuai topik, dan PDF tetap tersimpan privat. Mode dokumen lokal menonaktifkan OpenAlex/Crossref.</p>
             </div>
         </x-research.panel>
     </div>

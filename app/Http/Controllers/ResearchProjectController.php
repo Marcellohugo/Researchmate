@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\ProjectRequest;
+use App\Jobs\PruneVectorIndex;
 use App\Models\ResearchProject;
 use App\Models\User;
 use Illuminate\Http\RedirectResponse;
@@ -100,6 +101,7 @@ class ResearchProjectController extends Controller
         DB::transaction(function () use ($project): void {
             $paths = $project->documents()->pluck('storage_path')->merge($project->artifacts()->pluck('storage_path'))->all();
             $project->delete();
+            PruneVectorIndex::dispatch($project->id)->afterCommit();
             DB::afterCommit(function () use ($paths): void {
                 foreach ($paths as $path) {
                     if (! Storage::disk('local')->delete($path)) {

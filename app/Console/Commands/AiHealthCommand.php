@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Console\Commands;
 
 use App\Services\AI\SenopatiService;
+use App\Services\Documents\QdrantService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -13,9 +14,9 @@ class AiHealthCommand extends Command
 {
     protected $signature = 'ai:check';
 
-    protected $description = 'Periksa chat dan embedding gateway Senopati serta pgvector.';
+    protected $description = 'Periksa chat dan embedding Senopati, PostgreSQL, serta Qdrant.';
 
-    public function handle(SenopatiService $ai): int
+    public function handle(SenopatiService $ai, QdrantService $qdrant): int
     {
         $status = $ai->checkConnection();
         $this->line($status['message']);
@@ -26,18 +27,13 @@ class AiHealthCommand extends Command
             $embedding = $ai->generateEmbedding('Pemeriksaan model embedding ResearchMate.');
             $this->line('Dimensi embedding terdeteksi: '.count($embedding));
             if (DB::connection()->getDriverName() !== 'pgsql') {
-                $this->error('Database produksi harus menggunakan PostgreSQL dengan pgvector.');
+                $this->error('Database aplikasi harus menggunakan PostgreSQL.');
 
                 return self::FAILURE;
             }
-            $column = DB::selectOne("SELECT format_type(a.atttypid,a.atttypmod) AS type FROM pg_attribute a JOIN pg_class c ON a.attrelid=c.oid JOIN pg_namespace n ON c.relnamespace=n.oid WHERE c.relname='paper_chunks' AND n.nspname=current_schema() AND a.attname='embedding'");
-            $type = $column->type ?? '';
-            if ($type !== 'vector' && $type !== 'vector('.count($embedding).')') {
-                $this->error('Kolom paper_chunks.embedding bukan vector dengan dimensi yang sesuai.');
-
-                return self::FAILURE;
-            }
-            $this->info('Model AI dan kolom pgvector siap.');
+            DB::selectOne('SELECT 1');
+            $qdrant->checkCollection((string) config('ai.embed_model'), count($embedding));
+            $this->info('Model AI, PostgreSQL, dan Qdrant siap.');
 
             return self::SUCCESS;
         } catch (Throwable $exception) {
